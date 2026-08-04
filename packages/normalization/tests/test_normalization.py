@@ -1,4 +1,4 @@
-from asr_normalization import normalize_text, normalize_numbers
+from asr_utils.normalization import normalize_text, normalize_numbers
 
 
 def test_normalize_numbers_arabic_words():
