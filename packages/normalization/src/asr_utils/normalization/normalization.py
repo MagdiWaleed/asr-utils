@@ -291,10 +291,14 @@ def normalize_text(
 
     # Strip Urdu/Persian/Extended Arabic contamination, but spare any
     # character that's explicitly configured as keepable punctuation
-    # (e.g. Arabic ؟ U+061F and ، U+060C fall inside this range too)
-    if enable_punc:
-        protected_punc = set(enable_punc)
-        text = URDU_CHARS_PATTERN.sub(lambda m: m.group(0) if m.group(0) in protected_punc else "", text)
+    # (e.g. Arabic ؟ U+061F and ، U+060C fall inside this range too), and
+    # any map_letters source character -- some hamza variants (ٱ ٲ ٳ,
+    # U+0671-0673) fall inside this same ٰ-ۿ strip range, so
+    # without this they're deleted here before the fold step below ever
+    # sees them, instead of being folded like the map promises.
+    protected_chars = set(enable_punc or []) | set(map_letters)
+    if protected_chars:
+        text = URDU_CHARS_PATTERN.sub(lambda m: m.group(0) if m.group(0) in protected_chars else "", text)
     else:
         text = URDU_CHARS_PATTERN.sub("", text)
 

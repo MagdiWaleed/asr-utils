@@ -163,7 +163,7 @@ def test_normalize_text_full():
         enable_special_tokens=["<sos>"],
     )
     assert result == (
-        "hello, world! ahmed said 23 years <mytoken> <sos> and 100000 riyals امن حد كيف حالك"
+        "hello, world! ahmed said 23 years <mytoken> <sos> and 100000 riyals امن احد كيف حالك"
     )
 
 
