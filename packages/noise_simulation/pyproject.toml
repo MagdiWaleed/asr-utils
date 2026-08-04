@@ -10,4 +10,4 @@ requires-python = ">=3.9"
 dependencies = []
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/asr_noise_simulation"]
+packages = ["src/asr_utils"]
