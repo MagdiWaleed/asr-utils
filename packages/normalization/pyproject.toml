@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "asr-normalization"
+version = "1.0.0"
+description = "Text normalization utils"
+requires-python = ">=3.9"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/asr_normalization"]
