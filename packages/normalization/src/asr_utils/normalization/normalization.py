@@ -51,6 +51,14 @@ THOUSANDS_SEPARATOR_PATTERN = re.compile(r'\d{1,3}(?:,\d{3})+')
 
 
 def normalize_numbers(text: str) -> str:
+    """Convert Arabic-Indic digits and Arabic/English number words to digit strings.
+
+    Args:
+        text: input string.
+
+    Returns:
+        text with digits/number-words normalized to ASCII digit strings.
+    """
     if not text:
         return ""
 
@@ -106,10 +114,54 @@ def normalize_numbers(text: str) -> str:
 # whitespace (not arbitrary text) is allowed between the dots.
 ELLIPSIS_PATTERN = re.compile(r"\.(?:\s*\.)+")
 
+# Matches any "<...>" tag span (brackets + contents), e.g. "<afdaslk>",
+# "<noise>". Doesn't match nested/malformed brackets like "<<eot>>" past
+# the first ">", which is fine, real transcript tags aren't nested.
+TAG_PATTERN = re.compile(r"<[^<>]*>")
 
-def normalize_text(text: str, enable_punc: List[str] = None, eot_token: str = None) -> str:
+
+def normalize_text(
+    text: str,
+    enable_punc: List[str] = None,
+    eot_token: str = None,
+    include_folding: List[str] = None,
+    exclude_folding: List[str] = None,
+    enable_special_tokens: List[str] = None,
+) -> str:
+    """Normalize Arabic/English ASR transcript text.
+
+    Args:
+        text: input string to normalize.
+        enable_punc: punctuation characters to keep (e.g. ["?", ","])
+            instead of stripping all punctuation; spacing is normalized
+            around each one kept. None (default) strips all punctuation.
+        eot_token: end-of-turn marker to protect through normalization,
+            e.g. "<eot>". Kept intact, given exactly one space on both
+            sides, and stripped if it ends up leading the string.
+            Defaults to "<eot>" even when not passed, so that literal
+            marker survives the "<...>" tag-stripping below regardless.
+        include_folding: subset of hamza-variant characters (from the
+            internal Arabic fold map, currently only "آ" is reachable
+            here, see version notes) to fold to "ا". None (default)
+            folds all of them.
+        exclude_folding: characters to skip folding even if selected by
+            include_folding; takes precedence over include_folding.
+        enable_special_tokens: extra "<...>" tokens (e.g. ["<noise>",
+            "<music>"]) to keep intact, on top of the active eot marker.
+            Kept literally, unlowercased, wrapped in single spaces after
+            whitespace collapsing; unlike eot_token they get no
+            leading-strip treatment.
+
+    Returns:
+        Normalized text. Any "<...>" tag span (e.g. "<afdaslk>",
+        "<noise>") is stripped entirely, brackets and contents, except
+        the active eot_token and any enable_special_tokens.
+    """
     if not text:
         return ""
+
+    active_eot = eot_token or "<eot>"
+    special_tokens = list(enable_special_tokens or [])
 
     # Collapse "..." (any run of 2+ periods) to a single "." — an ellipsis
     # isn't a decimal point (single "." between digits is left untouched
@@ -118,9 +170,17 @@ def normalize_text(text: str, enable_punc: List[str] = None, eot_token: str = No
 
     text = normalize_numbers(text)
 
-    # Temporarily hide eot_token before normalization so it doesn't get stripped or separated
-    if eot_token and eot_token in text:
-        text = text.replace(eot_token, " __EOT_TOKEN__ ")
+    # Temporarily hide the eot token and any enabled special tokens before
+    # normalization so they don't get stripped or separated, then strip
+    # every other "<...>" tag span outright (brackets and contents) before
+    # it can leak letters like "<afdaslk>" -> "afdaslk" through the
+    # character-class punctuation step further down.
+    if active_eot in text:
+        text = text.replace(active_eot, " __EOT_TOKEN__ ")
+    for i, token in enumerate(special_tokens):
+        if token in text:
+            text = text.replace(token, f" __SPECIAL_TOKEN_{i}__ ")
+    text = TAG_PATTERN.sub("", text)
 
     # 1. Basic normalization
     text = text.lower()
@@ -139,8 +199,10 @@ def normalize_text(text: str, enable_punc: List[str] = None, eot_token: str = No
     arabic_map = {
         "آ": "ا", "ٱ": "ا", "ٲ": "ا", "ٳ": "ا",
     }
-    for src, tgt in arabic_map.items():
-        text = text.replace(src, tgt)
+    fold_keys = set(arabic_map) if include_folding is None else set(include_folding) & set(arabic_map)
+    fold_keys -= set(exclude_folding or [])
+    for src in fold_keys:
+        text = text.replace(src, arabic_map[src])
 
     # 4. Remove diacritics and tatweel
     text = DIACRITICS_PATTERN.sub("", text)
@@ -160,8 +222,14 @@ def normalize_text(text: str, enable_punc: List[str] = None, eot_token: str = No
         text = temp_pattern.sub(" ", text)
 
     # Re-insert eot_token
-    if eot_token and " __eot_token__ " in text:
-        text = text.replace(" __eot_token__ ", f" {eot_token} ")
+    if " __eot_token__ " in text:
+        text = text.replace(" __eot_token__ ", f" {active_eot} ")
+
+    # Re-insert special tokens
+    for i, token in enumerate(special_tokens):
+        placeholder = f" __special_token_{i}__ "
+        if placeholder in text:
+            text = text.replace(placeholder, f" {token} ")
 
     # Standardize spacing around enabled punctuation: no space before (glued
     # to the preceding word, standard writing convention), exactly one space
@@ -197,15 +265,13 @@ def normalize_text(text: str, enable_punc: List[str] = None, eot_token: str = No
 
     # Give eot_token exactly one space on both sides — it's a standalone
     # marker, not glued onto the preceding word/punctuation.
-    if eot_token:
-        escaped_eot = re.escape(eot_token)
-        text = re.sub(r'\s*' + escaped_eot + r'\s*', f' {eot_token} ', text)
+    escaped_eot = re.escape(active_eot)
+    text = re.sub(r'\s*' + escaped_eot + r'\s*', f' {active_eot} ', text)
 
     # Strip a leading eot_token — a segment shouldn't start with an
     # end-of-turn marker.
-    if eot_token:
-        leading_eot_pattern = re.compile(r'^(?:\s*' + re.escape(eot_token) + r')+\s*')
-        text = leading_eot_pattern.sub("", text)
+    leading_eot_pattern = re.compile(r'^(?:\s*' + re.escape(active_eot) + r')+\s*')
+    text = leading_eot_pattern.sub("", text)
 
     # 6. Normalize whitespace
     text = WHITESPACE_PATTERN.sub(" ", text).strip()
