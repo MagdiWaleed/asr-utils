@@ -13,6 +13,66 @@ def test_normalize_numbers_thousands_separator():
     assert normalize_numbers("100,000") == "100000"
 
 
+def test_normalize_numbers_leading_eot_alone_is_kept():
+    # bug found via real benchmark data: an eot-only hypothesis ("<eot>",
+    # ". <eot>") used to collapse to "" instead of staying "<eot>", losing
+    # the "nothing said, just end of turn" signal entirely.
+    assert normalize_text("<eot>") == "<eot>"
+    assert normalize_text(". <eot>") == "<eot>"
+    assert normalize_text("<eot> <eot>") == "<eot>"
+    assert normalize_text("<eot> hello world") == "hello world"  # real content still strips leading eot
+
+
+def test_normalize_numbers_chained_multiplier_product():
+    # bug A: chained multipliers must multiply, not sum
+    assert normalize_numbers("مائة ألف") == "100000"
+    assert normalize_numbers("خمسة مائة الف") == "500000"  # SINGLE + MULT + MULT chain
+    assert normalize_numbers("خمسة عشر الف") == "15000"    # baseline must not regress
+
+
+def test_normalize_numbers_fused_waw_connector():
+    # bug B: "و" glued to the next number word with no space
+    assert normalize_numbers("الفين وتسعه عشر") == "2019"
+    assert normalize_numbers("ألف ومئة") == "1100"
+
+
+def test_normalize_numbers_dual_forms():
+    # bug C: dual-inflected "two thousand"/"two hundred" as one word
+    assert normalize_numbers("ألفين وست مئة") == "2600"
+    assert normalize_numbers("ميتين و سبع مية") == "900"
+    assert normalize_numbers("مئتين الف") == "200000"  # dual directly chained into a multiplier
+
+
+def test_normalize_numbers_million_billion():
+    # bug D
+    assert normalize_numbers("ستين مليون") == "60000000"
+
+
+def test_normalize_numbers_colloquial_hundred_spelling():
+    # bug E: "مية"/"ميه"/"مئه" alongside the existing "مائة"/"مئة"
+    assert normalize_numbers("خمس مية") == "500"
+    assert normalize_numbers("الف وست مئه وثلاثه وثمانين") == "1683"
+
+
+def test_normalize_numbers_glued_hundred_compounds():
+    # found via real corpus data, not in the original bug list: "ثلاثمائة"
+    # etc. are one fused word (300-900), not "SINGLE space MULT"
+    assert normalize_numbers("ستمائة ألف") == "600000"
+    assert normalize_numbers("خمسمائة طالب") == "500 طالب"
+    assert normalize_numbers("تسعمية وسبعين") == "970"
+
+
+def test_normalize_numbers_dialect_fused_teens():
+    # bug G
+    assert normalize_numbers("خمس طعش") == "15"
+    assert normalize_numbers("ثلاث طعشر") == "13"
+
+
+def test_normalize_numbers_tanwin_carrier_alif():
+    # diacritic-timing bug: a tanwin-carrier alif on a number word
+    assert normalize_numbers("ثلاثاً و عشرين") == "23"
+
+
 def test_normalize_text_empty_string():
     assert normalize_text("") == ""
 
@@ -102,6 +162,15 @@ if __name__ == "__main__":
     test_normalize_numbers_arabic_words()
     test_normalize_numbers_english_words()
     test_normalize_numbers_thousands_separator()
+    test_normalize_numbers_leading_eot_alone_is_kept()
+    test_normalize_numbers_chained_multiplier_product()
+    test_normalize_numbers_fused_waw_connector()
+    test_normalize_numbers_dual_forms()
+    test_normalize_numbers_million_billion()
+    test_normalize_numbers_colloquial_hundred_spelling()
+    test_normalize_numbers_glued_hundred_compounds()
+    test_normalize_numbers_dialect_fused_teens()
+    test_normalize_numbers_tanwin_carrier_alif()
     test_normalize_text_empty_string()
     test_normalize_text_enable_punc()
     test_normalize_text_ellipsis_and_urdu_strip()

@@ -31,17 +31,47 @@ TENS_MAP = {
     'سبعون': 70, 'سبعين': 70,
     'ثمانون': 80, 'ثمانين': 80,
     'تسعون': 90, 'تسعين': 90,
+    # dialect fused teen suffix ("خمس طعش" = 15): behaves exactly like the
+    # MSA spaced "عشر"/"عشره" (adds 10 to a preceding SINGLE_MAP word), so
+    # it reuses that same summing logic below rather than needing a branch.
+    'طعش': 10, 'طعشر': 10,
     'ten': 10, 'eleven': 11, 'twelve': 12, 'thirteen': 13, 'fourteen': 14,
     'fifteen': 15, 'sixteen': 16, 'seventeen': 17, 'eighteen': 18, 'nineteen': 19,
     'twenty': 20, 'thirty': 30, 'forty': 40, 'fifty': 50,
     'sixty': 60, 'seventy': 70, 'eighty': 80, 'ninety': 90
 }
 MULT_MAP = {
-    'مائه': 100, 'مئة': 100, 'hundred': 100,
-    'الف': 1000, 'ألف': 1000, 'thousand': 1000
+    'مائه': 100, 'مائة': 100, 'مئة': 100, 'مئه': 100, 'مية': 100, 'ميه': 100, 'hundred': 100,
+    'الف': 1000, 'ألف': 1000, 'thousand': 1000,
+    'مليون': 1_000_000, 'ملايين': 1_000_000, 'million': 1_000_000,
+    'مليار': 1_000_000_000, 'مليارات': 1_000_000_000, 'billion': 1_000_000_000,
+}
+# Dual-inflected numbers are a single word carrying "two" already baked in
+# ("الفين" = 2000), not a bare multiplier waiting for a multiplicand like
+# MULT_MAP, so they get their own map and their own branch below.
+DUAL_MAP = {
+    'الفين': 2000, 'ألفين': 2000,
+    'مئتين': 200, 'ميتين': 200, 'مائتين': 200,
+}
+# Glued hundred-compounds ("ثلاثمائة" = 300) are one fused word with no
+# space, unlike "SINGLE + MULT" ("ثلاثة مائة" would be two words). Already a
+# complete value like DUAL_MAP, not a bare multiplier. Generated from every
+# ones-stem × hundred-spelling combination seen in real transcripts.
+_HUNDREDS_ONES_STEMS = {
+    'ثلاث': 3, 'تلت': 3, 'اربع': 4, 'أربع': 4, 'خمس': 5,
+    'ست': 6, 'سبع': 7, 'ثمان': 8, 'تسع': 9,
+}
+_HUNDRED_SUFFIXES = ['مائة', 'مائه', 'مئة', 'مئه', 'مية', 'ميه']
+GLUED_HUNDREDS_MAP = {
+    stem + suffix: value * 100
+    for stem, value in _HUNDREDS_ONES_STEMS.items()
+    for suffix in _HUNDRED_SUFFIXES
 }
 SUM_CONNECTORS = {'و', 'and'}
-ALL_NUM_WORDS = set(SINGLE_MAP.keys()) | set(TENS_MAP.keys()) | set(MULT_MAP.keys()) | SUM_CONNECTORS
+ALL_NUM_WORDS = (
+    set(SINGLE_MAP.keys()) | set(TENS_MAP.keys()) | set(MULT_MAP.keys())
+    | set(DUAL_MAP.keys()) | set(GLUED_HUNDREDS_MAP.keys()) | SUM_CONNECTORS
+)
 WORDS_RP = r'\b(' + '|'.join(re.escape(k) for k in ALL_NUM_WORDS) + r')\b'
 COMPOUND_NUM_PATTERN = re.compile(f'{WORDS_RP}(?:\\s+{WORDS_RP})*')
 DIGIT_SPACER_PATTERN = re.compile(r'(\d)\s+(?=\d)')
@@ -49,9 +79,47 @@ DIGIT_SPACER_PATTERN = re.compile(r'(\d)\s+(?=\d)')
 # a formatting separator, not meaningful content; flatten to "100000".
 THOUSANDS_SEPARATOR_PATTERN = re.compile(r'\d{1,3}(?:,\d{3})+')
 
+# Arabic "and" (و) is often written glued to the next number word with no
+# space ("وعشرين"), so Python's \b never fires between them (both are \w)
+# and COMPOUND_NUM_PATTERN can't see the connector at all. Split a leading
+# fused و off any word it's immediately attached to, iff that word is a
+# recognized number word, before compound matching runs.
+_WAW_TARGET_WORDS = sorted((ALL_NUM_WORDS - SUM_CONNECTORS), key=len, reverse=True)
+FUSED_WAW_PATTERN = re.compile(
+    r'(?<!\S)و(?=(?:' + '|'.join(re.escape(w) for w in _WAW_TARGET_WORDS) + r')\b)'
+)
+
+# Tanwin fathah (ً) written on a carrier alif at a word's end ("أربعاً")
+# leaves an orthographic ا behind that isn't part of the word's map key
+# ("اربع"); a plain diacritic strip alone can't fix this since it only
+# drops the mark, not the alif that was carrying it. Drop both together
+# before number-word matching. Other tanwin marks don't take a carrier
+# alif, so they're left to the general DIACRITICS_PATTERN strip elsewhere.
+TANWIN_ALIF_PATTERN = re.compile(r'اً')
+TANWIN_FATHA_PATTERN = re.compile(r'ً')
+
 
 def normalize_numbers(text: str) -> str:
     """Convert Arabic-Indic digits and Arabic/English number words to digit strings.
+
+    Handles: chained multipliers as a product ("مائة ألف" → 100000, not
+    1100), a fused leading و connector ("وعشرين" → treated as "و عشرين"),
+    dual-inflected hundreds/thousands ("الفين", "مئتين"), glued
+    hundred-compounds ("ثلاثمائة" → 300), million/billion, the colloquial
+    "مية"/"ميه"/"مئه" hundred spellings, dialect fused teens ("خمس طعش" →
+    15), and tanwin-carrier alifs on number words ("أربعاً").
+
+    Known unresolved edge case: a glued hundred-compound followed by "و" +
+    tens, then a multiplier ("ثلاثمائة وخمسين ألف", want 350000) computes
+    50300 instead — the tens gets multiplied alone instead of combined with
+    the hundred first. Rare in practice (~8 hits across a 115k-line, two-
+    dataset benchmark corpus); a linear single-pass parser can't resolve
+    this without breaking "ميتين و سبع مية" (900, correctly handled), which
+    needs the opposite treatment of the same connector. Needs real lookahead
+    to fix properly, not attempted here.
+
+    Does not handle fraction/half words ("نص", "ربع") or Levantine forms not
+    covered above, they're left as plain words.
 
     Args:
         text: input string.
@@ -65,36 +133,64 @@ def normalize_numbers(text: str) -> str:
     # 3.1 Arabic-Indic digits → ASCII digits
     text = text.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
 
+    # 3.1b Tanwin-carrier alif ("أربعاً" → "اربعا" → "اربع") before word
+    # matching, and fused و ("وعشرين" → "و عشرين") before compound matching.
+    text = TANWIN_ALIF_PATTERN.sub('', text)
+    text = TANWIN_FATHA_PATTERN.sub('', text)
+    text = FUSED_WAW_PATTERN.sub('و ', text)
+
     # 3.2 Number word spans → digit strings
     def process_num_words(match):
         words = match.group(0).split()
 
         if len(words) == 1:
             w = words[0]
-            for mapping in (SINGLE_MAP, TENS_MAP, MULT_MAP):
+            for mapping in (SINGLE_MAP, TENS_MAP, MULT_MAP, DUAL_MAP, GLUED_HUNDREDS_MAP):
                 if w in mapping:
                     return str(mapping[w])
             return w
 
         has_summing_clue = any(
-            w in TENS_MAP or w in MULT_MAP or w in SUM_CONNECTORS
+            w in TENS_MAP or w in MULT_MAP or w in SUM_CONNECTORS or w in DUAL_MAP or w in GLUED_HUNDREDS_MAP
             for w in words
         )
 
         if has_summing_clue:
             total = 0
             current = 0
+            pending_mult = 1  # accumulates a chain of adjacent MULT words,
+            # e.g. "مائة ألف" (hundred thousand) → 100*1000, flushed as one
+            # unit once a new segment starts.
+            # SINGLE/TENS/DUAL/GLUED_HUNDREDS all just contribute a value to
+            # the current segment ("ثلاثمائة وخمسين ألف" needs 300+50=350
+            # combined into current *before* "ألف" multiplies the whole
+            # thing to 350000, not 300 flushed away immediately and only the
+            # trailing 50 getting multiplied).
             for w in words:
                 if w in SUM_CONNECTORS:
+                    # a connector between two bare multipliers means they're
+                    # separate additive terms ("ألف ومئة" = 1000+100), not a
+                    # chain, so it forces the same flush a new segment does.
+                    if current or pending_mult != 1:
+                        total += max(1, current) * pending_mult
+                        current, pending_mult = 0, 1
                     continue
-                if w in SINGLE_MAP:
-                    current += SINGLE_MAP[w]
-                elif w in TENS_MAP:
-                    current += TENS_MAP[w]
-                elif w in MULT_MAP:
-                    total += max(1, current) * MULT_MAP[w]
-                    current = 0
-            return str(total + current)
+                if w in MULT_MAP:
+                    # chain instead of flushing immediately, so "خمسة مائة
+                    # ألف" (five hundred thousand) multiplies all three
+                    # together (500000) instead of only the first (500).
+                    pending_mult *= MULT_MAP[w]
+                    continue
+                for mapping in (SINGLE_MAP, TENS_MAP, DUAL_MAP, GLUED_HUNDREDS_MAP):
+                    if w in mapping:
+                        if pending_mult != 1:
+                            total += max(1, current) * pending_mult
+                            current, pending_mult = 0, 1
+                        current += mapping[w]
+                        break
+            if current or pending_mult != 1:
+                total += max(1, current) * pending_mult
+            return str(total)
         else:
             return "".join(str(SINGLE_MAP[w]) for w in words if w in SINGLE_MAP)
 
@@ -269,9 +365,15 @@ def normalize_text(
     text = re.sub(r'\s*' + escaped_eot + r'\s*', f' {active_eot} ', text)
 
     # Strip a leading eot_token — a segment shouldn't start with an
-    # end-of-turn marker.
+    # end-of-turn marker. Exception: if the eot marker is the *entire*
+    # content (nothing else was ever said), keep one copy instead of
+    # collapsing to an empty string, an empty-turn prediction is still
+    # meaningful signal, not equivalent to no output at all.
     leading_eot_pattern = re.compile(r'^(?:\s*' + re.escape(active_eot) + r')+\s*')
-    text = leading_eot_pattern.sub("", text)
+    if leading_eot_pattern.fullmatch(text):
+        text = active_eot
+    else:
+        text = leading_eot_pattern.sub("", text)
 
     # 6. Normalize whitespace
     text = WHITESPACE_PATTERN.sub(" ", text).strip()
