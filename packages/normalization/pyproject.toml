@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "asr-normalization"
-version = "2.2.2"
+version = "2.2.3"
 description = "Text normalization utils"
 requires-python = ">=3.9"
 dependencies = []

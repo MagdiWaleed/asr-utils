@@ -3,10 +3,11 @@ name: update
 description: >
   Release a new version of one package in this asr-utils monorepo: bumps
   pyproject.toml version, writes packages/<name>/versions/<version>.md
-  documenting what changed since the last version, runs tests, commits,
-  and (after confirmation) tags and pushes. Use when the user says
-  "/update <package>", "release <package>", "bump <package> version",
-  or "new version of <package>".
+  documenting what changed since the last version, runs tests, keeps
+  packages/<name>/example.py and example.md current and in sync with
+  each other, output verified, commits, and (after confirmation) tags
+  and pushes. Use when the user says "/update <package>", "release
+  <package>", "bump <package> version", or "new version of <package>".
 ---
 
 Release one package under `packages/<name>/`. Args: `<package>`
@@ -60,12 +61,40 @@ gives neither, ask.
    `test_*.py`. All must pass. If any fail, stop, report the failure,
    do not commit a broken release. Clean up the venv after.
 
-9. **Commit** `pyproject.toml` and the new `versions/<version>.md`
-   (plus any other already-staged changes for this package):
-   `Bump <dist-name> to <new-version>`, one-line body only if the bump
-   is breaking (state what breaks).
+9. **Keep both `packages/<package>/example.py` and `example.md` current
+   and in sync** — same set of examples, in the same order, in both.
+   If neither exists yet, create both:
+   - `example.py`: runnable (`python example.py`), a `main()` with one
+     call per example, plain `print(...)`, no inline output comments.
+   - `example.md`: starts with a "Function signatures" section showing
+     every public function's full signature (all params, verbatim from
+     source) so the whole API is visible before any example, including
+     the literal value of any dict/list default (e.g. `MAP_LETTERS`).
+     Then one section per param/behavior, each a fenced ```python```
+     block ending in a `# ->` comment with its real output.
+   - For any param that takes a dict/list override (like `map_letters`),
+     both files show an add example **and** a remove example, not just
+     add.
 
-10. **Confirm before publishing.** Show the commit and the changelog
+   If they already exist, check whether this release's diff added,
+   removed, or changed a parameter/behavior they cover (or should now
+   cover) and update both, including the signatures section in
+   `example.md`.
+
+   Either way, **never write an output you haven't actually run.** In
+   the same venv as step 8, run `example.py` itself and use its real
+   stdout, in order, as the `# ->` values in `example.md` — that also
+   proves the two files agree, don't hand-copy outputs from memory or
+   from a separate throwaway script. Fix anything that doesn't match.
+   Clean up the venv after.
+
+10. **Commit** `pyproject.toml`, the new `versions/<version>.md`, and
+    `example.py`/`example.md` if either changed (plus any other
+    already-staged changes for this package): `Bump <dist-name> to
+    <new-version>`, one-line body only if the bump is breaking (state
+    what breaks).
+
+11. **Confirm before publishing.** Show the commit and the changelog
     entry, ask before tagging/pushing, this touches the shared remote
     other projects install from. On yes:
     ```
