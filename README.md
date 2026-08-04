@@ -6,7 +6,7 @@ all import from one shared namespace: `asr_utils.<category>`.
 
 ```
 packages/
-  normalization/         asr-normalization      v1.1.0
+  normalization/         asr-normalization      v2.0.0
   noise_simulation/      asr-noise-simulation    v0.1.0 (skeleton, no code yet)
 ```
 
@@ -18,7 +18,7 @@ the category you need, pinned to its own tag:
 
 **normalization**
 ```
-pip install "git+ssh://git@github.com/MagdiWaleed/asr-utils.git@normalization-v1.1.0#subdirectory=packages/normalization"
+pip install "git+ssh://git@github.com/MagdiWaleed/asr-utils.git@normalization-v2.0.0#subdirectory=packages/normalization"
 ```
 ```python
 from asr_utils.normalization import normalize_text, normalize_numbers
@@ -41,6 +41,7 @@ Drop `@<tag>` to track `main` instead of a pinned release.
 packages/<name>/
   pyproject.toml            # name="asr-<name>", version="0.1.0", packages=["src/asr_utils"]
   src/asr_utils/<name>/__init__.py
+  versions/
   tests/
 ```
 
@@ -48,13 +49,25 @@ No `src/asr_utils/__init__.py` file, that absence is what makes it a
 namespace package so every category's distribution can share the
 `asr_utils` import root without stepping on each other.
 
+## Version history
+
+Each package keeps a `versions/<version>.md` per release, documenting
+what changed since the previous version (e.g.
+`packages/normalization/versions/2.0.0.md`). Check there before
+upgrading a pin, breaking changes are called out explicitly.
+
 ## Release a package
 
-Bump its `pyproject.toml` version, then tag `<name>-v<version>` and push:
+Use the `/update` skill: `/update <package> <major|minor|patch|x.y.z>`.
+It bumps `pyproject.toml`, writes the `versions/<version>.md` entry
+from the actual diff, runs the package's tests, commits, then asks
+before tagging and pushing.
+
+Manually, the same shape:
 
 ```
-git tag normalization-v1.1.0
-git push origin normalization-v1.1.0
+git tag normalization-v2.0.0
+git push origin normalization-v2.0.0
 ```
 
 Only that package's tag changes, other packages stay pinned to their own tags.
