@@ -38,16 +38,19 @@ normalize_text("Hello, World!", enable_punc=[",", "!"])
 
 ## eot_token — protect an end-of-turn marker through normalization
 
-Defaults to `"<eot>"` even without passing it:
+No `eot_token` given: no protection at all, `"<eot>"` is just another tag
+and gets stripped like any other:
 
 ```python
 normalize_text("hello <eot> world")
-# -> 'hello <eot> world'
+# -> 'hello world'
 ```
 
-Custom token:
+Only the exact token you pass is protected, whatever it looks like:
 
 ```python
+normalize_text("hello <eot> world", eot_token="<eot>")
+# -> 'hello <eot> world'
 normalize_text("hello <turn_end> world", eot_token="<turn_end>")
 # -> 'hello <turn_end> world'
 ```
@@ -57,7 +60,7 @@ normalize_text("hello <turn_end> world", eot_token="<turn_end>")
 Every other `<...>` tag gets stripped entirely:
 
 ```python
-normalize_text("<noise> hello <junk> world <eot>", enable_special_tokens=["<noise>"])
+normalize_text("<noise> hello <junk> world <eot>", eot_token="<eot>", enable_special_tokens=["<noise>"])
 # -> '<noise> hello world <eot>'
 ```
 

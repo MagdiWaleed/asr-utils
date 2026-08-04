@@ -240,10 +240,12 @@ def normalize_text(
             instead of stripping all punctuation; spacing is normalized
             around each one kept. None (default) strips all punctuation.
         eot_token: end-of-turn marker to protect through normalization,
-            e.g. "<eot>". Kept intact, given exactly one space on both
-            sides, and stripped if it ends up leading the string.
-            Defaults to "<eot>" even when not passed, so that literal
-            marker survives the "<...>" tag-stripping below regardless.
+            e.g. "<eot>", "<endofturn>", "<end-of-turn>", whatever your
+            model actually emits. Kept intact, given exactly one space on
+            both sides, and stripped if it ends up leading the string.
+            None (default): no eot marker is protected, a literal "<eot>"
+            in the text is just another tag and gets stripped like any
+            other "<...>" span.
         enable_special_tokens: extra "<...>" tokens (e.g. ["<noise>",
             "<music>"]) to keep intact, on top of the active eot marker.
             Kept literally, unlowercased, wrapped in single spaces after
@@ -258,12 +260,12 @@ def normalize_text(
     Returns:
         Normalized text. Any "<...>" tag span (e.g. "<afdaslk>",
         "<noise>") is stripped entirely, brackets and contents, except
-        the active eot_token and any enable_special_tokens.
+        eot_token (if given) and any enable_special_tokens.
     """
     if not text:
         return ""
 
-    active_eot = eot_token or "<eot>"
+    active_eot = eot_token
     special_tokens = list(enable_special_tokens or [])
 
     # Collapse "..." (any run of 2+ periods) to a single "." — an ellipsis
@@ -278,7 +280,7 @@ def normalize_text(
     # every other "<...>" tag span outright (brackets and contents) before
     # it can leak letters like "<afdaslk>" -> "afdaslk" through the
     # character-class punctuation step further down.
-    if active_eot in text:
+    if active_eot and active_eot in text:
         text = text.replace(active_eot, " __EOT_TOKEN__ ")
     for i, token in enumerate(special_tokens):
         if token in text:
@@ -324,7 +326,7 @@ def normalize_text(
         text = temp_pattern.sub(" ", text)
 
     # Re-insert eot_token
-    if " __eot_token__ " in text:
+    if active_eot and " __eot_token__ " in text:
         text = text.replace(" __eot_token__ ", f" {active_eot} ")
 
     # Re-insert special tokens
@@ -365,21 +367,22 @@ def normalize_text(
         )
         text = leading_punc_pattern.sub("", text)
 
-    # Give eot_token exactly one space on both sides — it's a standalone
-    # marker, not glued onto the preceding word/punctuation.
-    escaped_eot = re.escape(active_eot)
-    text = re.sub(r'\s*' + escaped_eot + r'\s*', f' {active_eot} ', text)
+    if active_eot:
+        # Give eot_token exactly one space on both sides — it's a
+        # standalone marker, not glued onto the preceding word/punctuation.
+        escaped_eot = re.escape(active_eot)
+        text = re.sub(r'\s*' + escaped_eot + r'\s*', f' {active_eot} ', text)
 
-    # Strip a leading eot_token — a segment shouldn't start with an
-    # end-of-turn marker. Exception: if the eot marker is the *entire*
-    # content (nothing else was ever said), keep one copy instead of
-    # collapsing to an empty string, an empty-turn prediction is still
-    # meaningful signal, not equivalent to no output at all.
-    leading_eot_pattern = re.compile(r'^(?:\s*' + re.escape(active_eot) + r')+\s*')
-    if leading_eot_pattern.fullmatch(text):
-        text = active_eot
-    else:
-        text = leading_eot_pattern.sub("", text)
+        # Strip a leading eot_token — a segment shouldn't start with an
+        # end-of-turn marker. Exception: if the eot marker is the *entire*
+        # content (nothing else was ever said), keep one copy instead of
+        # collapsing to an empty string, an empty-turn prediction is still
+        # meaningful signal, not equivalent to no output at all.
+        leading_eot_pattern = re.compile(r'^(?:\s*' + re.escape(active_eot) + r')+\s*')
+        if leading_eot_pattern.fullmatch(text):
+            text = active_eot
+        else:
+            text = leading_eot_pattern.sub("", text)
 
     # 6. Normalize whitespace
     text = WHITESPACE_PATTERN.sub(" ", text).strip()

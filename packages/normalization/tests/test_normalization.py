@@ -17,11 +17,12 @@ def test_normalize_numbers_thousands_separator():
 def test_normalize_numbers_leading_eot_alone_is_kept():
     # bug found via real benchmark data: an eot-only hypothesis ("<eot>",
     # ". <eot>") used to collapse to "" instead of staying "<eot>", losing
-    # the "nothing said, just end of turn" signal entirely.
-    assert normalize_text("<eot>") == "<eot>"
-    assert normalize_text(". <eot>") == "<eot>"
-    assert normalize_text("<eot> <eot>") == "<eot>"
-    assert normalize_text("<eot> hello world") == "hello world"  # real content still strips leading eot
+    # the "nothing said, just end of turn" signal entirely. Only applies
+    # when eot_token is actually given, see test_normalize_text_eot_token_*.
+    assert normalize_text("<eot>", eot_token="<eot>") == "<eot>"
+    assert normalize_text(". <eot>", eot_token="<eot>") == "<eot>"
+    assert normalize_text("<eot> <eot>", eot_token="<eot>") == "<eot>"
+    assert normalize_text("<eot> hello world", eot_token="<eot>") == "hello world"  # real content still strips leading eot
 
 
 def test_normalize_numbers_chained_multiplier_product():
@@ -92,14 +93,25 @@ def test_normalize_text_eot_token_custom():
 
 
 def test_normalize_text_eot_token_default():
-    # "<eot>" is protected even when eot_token isn't passed at all.
-    assert normalize_text("hello <eot> world") == "hello <eot> world"
+    # no eot_token given -> no eot protection at all, "<eot>" is just
+    # another tag and gets stripped like any other.
+    assert normalize_text("hello <eot> world") == "hello world"
     assert normalize_text("<eot> hello world") == "hello world"
+    assert normalize_text("<eot>") == ""
+
+
+def test_normalize_text_eot_token_custom_marker_variants():
+    # only the exact provided token is kept, whatever it looks like
+    assert normalize_text("hello <endofturn> world", eot_token="<endofturn>") == "hello <endofturn> world"
+    assert normalize_text("hello <end-of-turn> world", eot_token="<end-of-turn>") == "hello <end-of-turn> world"
+    # a literal "<eot>" in the text is not special when a different
+    # eot_token is active
+    assert normalize_text("hello <eot> world", eot_token="<endofturn>") == "hello world"
 
 
 def test_normalize_text_strips_generic_tags():
     assert normalize_text("hello <afdaslk> world") == "hello world"
-    assert normalize_text("<noise> hello <music> world <eot>") == "hello world <eot>"
+    assert normalize_text("<noise> hello <music> world <eot>") == "hello world"
     assert normalize_text("hello <> world") == "hello world"
 
 
@@ -128,10 +140,10 @@ def test_normalize_text_map_letters_override():
 
 
 def test_normalize_text_enable_special_tokens():
-    # kept, other tags still stripped, default eot still protected
+    # kept, other tags (including "<eot>", no eot_token given here) stripped
     assert normalize_text(
         "hello <noise> world <eot> <music> bye", enable_special_tokens=["<noise>"]
-    ) == "hello <noise> world <eot> bye"
+    ) == "hello <noise> world bye"
     # multiple special tokens kept
     assert normalize_text(
         "<noise> hello <music> world <junk>", enable_special_tokens=["<noise>", "<music>"]
@@ -148,8 +160,8 @@ def test_normalize_text_enable_special_tokens():
 
 def test_normalize_text_full():
     """Every option exercised in one call: enable_punc, custom eot_token
-    (distinct from the "<eot>" default, proving the default stops being
-    special once a custom one is given), enable_special_tokens, letter
+    (proving a literal "<eot>" in the text is not special when a
+    different eot_token is active), enable_special_tokens, letter
     folding, number words, thousands separator, ellipsis collapsing,
     generic tag stripping, Urdu strip."""
     text = (
@@ -185,6 +197,7 @@ if __name__ == "__main__":
     test_normalize_text_ellipsis_and_urdu_strip()
     test_normalize_text_eot_token_custom()
     test_normalize_text_eot_token_default()
+    test_normalize_text_eot_token_custom_marker_variants()
     test_normalize_text_strips_generic_tags()
     test_normalize_text_custom_eot_strips_other_tags_including_default()
     test_normalize_text_letter_folding()
