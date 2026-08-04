@@ -1,4 +1,5 @@
 from asr_utils.normalization import normalize_text, normalize_numbers
+from asr_utils.normalization.normalization import MAP_LETTERS
 
 
 def test_normalize_numbers_arabic_words():
@@ -109,12 +110,21 @@ def test_normalize_text_custom_eot_strips_other_tags_including_default():
     assert normalize_text("hello <eot> world", eot_token="<mytoken>") == "hello world"
 
 
-def test_normalize_text_include_exclude_folding():
-    assert normalize_text("آمن") == "امن"  # default: fold
-    assert normalize_text("آمن", include_folding=["آ"]) == "امن"
-    assert normalize_text("آمن", include_folding=["أ"]) == "آمن"  # unrelated char, no fold
-    assert normalize_text("آمن", exclude_folding=["آ"]) == "آمن"
-    assert normalize_text("آمن", include_folding=["آ"], exclude_folding=["آ"]) == "آمن"  # exclude wins
+def test_normalize_text_letter_folding():
+    assert normalize_text("آمن") == "امن"
+    assert normalize_text("أحمد") == "احمد"
+    assert normalize_text("إنسان") == "انسان"
+
+
+def test_normalize_text_map_letters_override():
+    # add an entry on top of the default
+    added = {**MAP_LETTERS, "ة": "ه"}
+    assert normalize_text("مدرسة", map_letters=added) == "مدرسه"
+    # drop an entry: only آ folds, أ no longer does
+    minimal = {"آ": "ا"}
+    assert normalize_text("آمن أحمد", map_letters=minimal) == "امن أحمد"
+    # default unaffected when not passed
+    assert normalize_text("آمن أحمد") == "امن احمد"
 
 
 def test_normalize_text_enable_special_tokens():
@@ -139,9 +149,9 @@ def test_normalize_text_enable_special_tokens():
 def test_normalize_text_full():
     """Every option exercised in one call: enable_punc, custom eot_token
     (distinct from the "<eot>" default, proving the default stops being
-    special once a custom one is given), enable_special_tokens,
-    exclude_folding, number words, thousands separator, ellipsis
-    collapsing, generic tag stripping, Urdu strip."""
+    special once a custom one is given), enable_special_tokens, letter
+    folding, number words, thousands separator, ellipsis collapsing,
+    generic tag stripping, Urdu strip."""
     text = (
         "Hello, World!... <noise> Ahmed said twenty three years <mytoken> "
         "<junk> <sos> and <eot> 100,000 riyals آمن ٱحد كيف حالك؟"
@@ -151,10 +161,9 @@ def test_normalize_text_full():
         enable_punc=[",", "!"],
         eot_token="<mytoken>",
         enable_special_tokens=["<sos>"],
-        exclude_folding=["آ"],
     )
     assert result == (
-        "hello, world! ahmed said 23 years <mytoken> <sos> and 100000 riyals آمن حد كيف حالك"
+        "hello, world! ahmed said 23 years <mytoken> <sos> and 100000 riyals امن حد كيف حالك"
     )
 
 
@@ -178,7 +187,8 @@ if __name__ == "__main__":
     test_normalize_text_eot_token_default()
     test_normalize_text_strips_generic_tags()
     test_normalize_text_custom_eot_strips_other_tags_including_default()
-    test_normalize_text_include_exclude_folding()
+    test_normalize_text_letter_folding()
+    test_normalize_text_map_letters_override()
     test_normalize_text_enable_special_tokens()
     test_normalize_text_full()
     print("ok")
