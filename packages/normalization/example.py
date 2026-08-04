@@ -16,14 +16,18 @@ def main():
     # enable_punc: keep chosen punctuation instead of stripping it all
     print(normalize_text("Hello, World!", enable_punc=[",", "!"]))
 
-    # eot_token: protect an end-of-turn marker. Defaults to "<eot>" even
-    # without passing it.
+    # eot_token: protect an end-of-turn marker. No eot_token given -> no
+    # protection at all, "<eot>" is just another tag and gets stripped.
     print(normalize_text("hello <eot> world"))
+    # Only the exact token you pass is protected, whatever it looks like.
+    print(normalize_text("hello <eot> world", eot_token="<eot>"))
     print(normalize_text("hello <turn_end> world", eot_token="<turn_end>"))
 
     # enable_special_tokens: keep extra tags alongside the eot marker;
     # every other "<...>" tag gets stripped entirely.
-    print(normalize_text("<noise> hello <junk> world <eot>", enable_special_tokens=["<noise>"]))
+    print(normalize_text(
+        "<noise> hello <junk> world <eot>", eot_token="<eot>", enable_special_tokens=["<noise>"]
+    ))
 
     # map_letters: add a mapping on top of the default
     print(normalize_text("مدرسة", map_letters={**MAP_LETTERS, "ة": "ه"}))
