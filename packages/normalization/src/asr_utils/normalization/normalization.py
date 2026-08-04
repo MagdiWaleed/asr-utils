@@ -1,12 +1,21 @@
 import re
 import unicodedata
-from typing import List
+from typing import Dict, List
 
 URDU_CHARS_PATTERN = re.compile(
     r'[؀-ؠً-ٟ٠-ٯٰ-ۿݐ-ݿࢠ-ࣿ]'
 )
 DIACRITICS_PATTERN = re.compile(r"[ؗ-ًؚ-ْـ]")
 WHITESPACE_PATTERN = re.compile(r"\s+")
+
+# Hamza-variant folding: collapse alif-hamza forms to plain alif. Passed
+# as the map_letters default below so callers can see exactly what's
+# mapped and pass their own dict (e.g. {**MAP_LETTERS, "ة": "ه"}) to add,
+# override, or drop entries.
+MAP_LETTERS = {
+    "أ": "ا", "إ": "ا",
+    "آ": "ا", "ٱ": "ا", "ٲ": "ا", "ٳ": "ا",
+}
 
 # Number Conversion Maps
 SINGLE_MAP = {
@@ -220,9 +229,8 @@ def normalize_text(
     text: str,
     enable_punc: List[str] = None,
     eot_token: str = None,
-    include_folding: List[str] = None,
-    exclude_folding: List[str] = None,
     enable_special_tokens: List[str] = None,
+    map_letters: Dict[str, str] = MAP_LETTERS,
 ) -> str:
     """Normalize Arabic/English ASR transcript text.
 
@@ -236,17 +244,16 @@ def normalize_text(
             sides, and stripped if it ends up leading the string.
             Defaults to "<eot>" even when not passed, so that literal
             marker survives the "<...>" tag-stripping below regardless.
-        include_folding: subset of hamza-variant characters (from the
-            internal Arabic fold map, currently only "آ" is reachable
-            here, see version notes) to fold to "ا". None (default)
-            folds all of them.
-        exclude_folding: characters to skip folding even if selected by
-            include_folding; takes precedence over include_folding.
         enable_special_tokens: extra "<...>" tokens (e.g. ["<noise>",
             "<music>"]) to keep intact, on top of the active eot marker.
             Kept literally, unlowercased, wrapped in single spaces after
             whitespace collapsing; unlike eot_token they get no
             leading-strip treatment.
+        map_letters: letter-fold mapping, defaults to MAP_LETTERS above so
+            you can see exactly what's mapped. Pass your own dict to add
+            to it, override an entry, or drop one, e.g.
+            {**MAP_LETTERS, "ة": "ه"} to add a mapping on top of the
+            default, or a filtered copy to remove one.
 
     Returns:
         Normalized text. Any "<...>" tag span (e.g. "<afdaslk>",
@@ -292,13 +299,8 @@ def normalize_text(
         text = URDU_CHARS_PATTERN.sub("", text)
 
     # 2. Arabic character normalization
-    arabic_map = {
-        "آ": "ا", "ٱ": "ا", "ٲ": "ا", "ٳ": "ا",
-    }
-    fold_keys = set(arabic_map) if include_folding is None else set(include_folding) & set(arabic_map)
-    fold_keys -= set(exclude_folding or [])
-    for src in fold_keys:
-        text = text.replace(src, arabic_map[src])
+    for src, tgt in map_letters.items():
+        text = text.replace(src, tgt)
 
     # 4. Remove diacritics and tatweel
     text = DIACRITICS_PATTERN.sub("", text)
