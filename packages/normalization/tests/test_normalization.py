@@ -285,6 +285,91 @@ def test_normalize_text_full():
     )
 
 
+def test_normalize_numbers_compound_before_multiplier():
+    # the whole compound is multiplied, not just its last word
+    assert normalize_numbers("خمسة وعشرين ألف") == "25000"
+    assert normalize_numbers("ثلاثمائة وخمسين ألف") == "350000"
+    assert normalize_numbers("مائة وخمسة وعشرين ألف") == "125000"
+    assert normalize_numbers("خمسة وعشرين مليوناً وثمانمائة وتسعة آلاف") == "25809000"
+    assert normalize_numbers("ألف مليون") == "1000000000"
+    # tanwin on a و-fused multiplier
+    assert normalize_numbers("مليوناً وألفاً وأربعمائة وأحد عشر") == "1001411"
+    assert normalize_numbers("one hundred and four thousand thirty") == "104030"
+
+
+def test_normalize_numbers_msa_nominative_and_feminine():
+    assert normalize_numbers("مئتان وثلاثة") == "203"
+    assert normalize_numbers("ألفان") == "2000"
+    assert normalize_numbers("مليونان") == "2000000"
+    assert normalize_numbers("أحد عشر") == "11"
+    assert normalize_numbers("إحدى عشرة") == "11"
+    assert normalize_numbers("اثنتا عشرة") == "12"
+    assert normalize_numbers("ثماني عشرة") == "18"
+    assert normalize_numbers("ثلاث مائة") == "300"
+
+
+def test_normalize_numbers_egyptian_and_levantine():
+    assert normalize_numbers("تلاتة") == "3"
+    assert normalize_numbers("اتنين وتلاتين") == "32"
+    assert normalize_numbers("اتناشر") == "12"
+    assert normalize_numbers("خمسطعش") == "15"
+    assert normalize_numbers("ربعمية وتمانين") == "480"
+    assert normalize_numbers("تلات تلاف") == "3000"
+    assert normalize_numbers("تمن تلاف") == "8000"
+
+
+def test_normalize_numbers_context_only_ones():
+    # "أحد"/"إحدى" only before a tens word; "تمن" (price) only before a multiplier
+    assert normalize_numbers("لا أحد") == "لا أحد"
+    assert normalize_numbers("إحدى المدارس") == "إحدى المدارس"
+    assert normalize_numbers("وأحد الأشخاص") == "وأحد الأشخاص"
+    assert normalize_numbers("تمن الحاجة") == "تمن الحاجة"
+
+
+def test_normalize_numbers_fractions_after_multiplier():
+    assert normalize_numbers("مليون ونص") == "1500000"
+    assert normalize_numbers("مية وربع") == "125"
+    # a half after a plain number is usually a time, left as words
+    assert normalize_numbers("الساعة خمسة ونص") == "الساعة 5 ونص"
+    assert normalize_numbers("نص كوب") == "نص كوب"
+
+
+def test_normalize_numbers_digits_with_multiplier():
+    assert normalize_numbers("5 مليون") == "5000000"
+    assert normalize_numbers("3.5 مليون") == "3500000"
+    assert normalize_numbers("٣٫٥ مليون") == "3500000"
+    assert normalize_numbers("11 ألف وتسعة وتسعين") == "11099"
+    # digits without a multiplier are never touched
+    assert normalize_numbers("بين 2000 و 500") == "بين 2000 و 500"
+
+
+def test_normalize_text_keeps_decimal_point():
+    # "." wasn't enabled punctuation, so "3.5" used to become "3 5"
+    assert normalize_text("السعر 2.75 جنيه") == "السعر 2.75 جنيه"
+    assert normalize_text("الساعة 3.30.") == "الساعة 3.30"
+
+
+def test_normalize_numbers_two_ones_are_a_range():
+    # "three or four", not 34; three or more ones still read digit by digit
+    assert normalize_numbers("تلات أربع حبات") == "3 4 حبات"
+    assert normalize_numbers("صفر واحد اتنين تلاتة") == "0123"
+
+
+def test_normalize_numbers_words_that_are_not_numbers_here():
+    assert normalize_numbers("بشوية مية") == "بشوية مية"        # water
+    assert normalize_numbers("مية جنيه") == "100 جنيه"
+    assert normalize_numbers("جاهزة مية في المية") == "جاهزة 100 في المية"   # 100%
+    assert normalize_numbers("دفعت حوالي مية") == "دفعت حوالي 100"
+    assert normalize_numbers("مية وخمسين") == "150"
+    assert normalize_numbers("ست البيت") == "ست البيت"          # housewife
+    assert normalize_numbers("ست حاجات") == "6 حاجات"
+    assert normalize_numbers("السادس عشر") == "السادس عشر"      # ordinal
+    assert normalize_numbers("يعطيك الف عافية") == "يعطيك الف عافية"
+    assert normalize_numbers("لكل واحد") == "لكل واحد"          # everyone
+    assert normalize_numbers("واحدة من اهم") == "واحدة من اهم"  # one of
+    assert normalize_numbers("one of them") == "one of them"
+
+
 if __name__ == "__main__":
     test_normalize_numbers_arabic_words()
     test_normalize_numbers_english_words()
@@ -324,3 +409,12 @@ if __name__ == "__main__":
     test_normalize_text_presentation_forms_decompose()
     test_normalize_numbers_vowelled_number_words()
     test_normalize_numbers_plural_thousands()
+    test_normalize_numbers_compound_before_multiplier()
+    test_normalize_numbers_msa_nominative_and_feminine()
+    test_normalize_numbers_egyptian_and_levantine()
+    test_normalize_numbers_context_only_ones()
+    test_normalize_numbers_fractions_after_multiplier()
+    test_normalize_numbers_digits_with_multiplier()
+    test_normalize_text_keeps_decimal_point()
+    test_normalize_numbers_two_ones_are_a_range()
+    test_normalize_numbers_words_that_are_not_numbers_here()

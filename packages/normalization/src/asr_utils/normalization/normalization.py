@@ -1,5 +1,6 @@
 import re
 import unicodedata
+from decimal import Decimal
 from typing import Dict, List
 
 URDU_CHARS_PATTERN = re.compile(
@@ -76,33 +77,122 @@ GLUED_HUNDREDS_MAP = {
     for stem, value in _HUNDREDS_ONES_STEMS.items()
     for suffix in _HUNDRED_SUFFIXES
 }
-# Hamza-spelled number words. normalize_numbers runs before normalize_text's
-# letter fold, so without these "أربعة" stayed a word while "اربعة" became 4.
-# Deliberately not "أحد": it means "someone" far more often than "one".
+# ── Spelling coverage ─────────────────────────────────────────────────────────
+# normalize_numbers runs before normalize_text's letter fold, so every spelling
+# a speaker's transcript can contain has to be a key here, or two spellings of
+# the same number normalize differently ("أربعة" stayed a word, "اربعة" → 4).
 SINGLE_MAP.update({
+    # hamza spellings
     'أربعه': 4, 'أربعة': 4, 'أربع': 4,
     'إثنان': 2, 'إثنين': 2, 'أثنين': 2, 'إثنتان': 2, 'إثنتين': 2, 'إثنا': 2, 'إثني': 2,
+    # MSA feminine / construct forms ("اثنتا عشرة", "ثماني عشرة")
+    'اثنتا': 2, 'إثنتا': 2, 'ثماني': 8,
+    # Egyptian
+    'اتنين': 2, 'إتنين': 2, 'تلاتة': 3, 'تلاته': 3, 'تلات': 3,
+    'تمانية': 8, 'تمانيه': 8, 'تمان': 8,
 })
-TENS_MAP.update({'أربعون': 40, 'أربعين': 40})
+TENS_MAP.update({
+    'أربعون': 40, 'أربعين': 40,
+    'تلاتين': 30, 'تلاتون': 30, 'تمانين': 80, 'تمنين': 80,
+    # Egyptian (-تاشر/-طاشر) and Levantine (-طعش) fused teens. They add like a
+    # tens word, so "ميتين وخمستاشر" = 215 needs no special branch.
+    'حداشر': 11, 'احداشر': 11, 'إحداشر': 11, 'حدعش': 11,
+    'اتناشر': 12, 'اطناشر': 12, 'اثناشر': 12, 'طنعش': 12,
+    'تلتاشر': 13, 'تلاتاشر': 13, 'تلطاشر': 13, 'تلطعش': 13,
+    'اربعتاشر': 14, 'أربعتاشر': 14, 'اربعطاشر': 14, 'اربعطعش': 14,
+    'خمستاشر': 15, 'خمسطاشر': 15, 'خمسطعش': 15,
+    'ستاشر': 16, 'سطاشر': 16, 'سطعش': 16,
+    'سبعتاشر': 17, 'سبعطاشر': 17, 'سبعطعش': 17,
+    'تمنتاشر': 18, 'تمانتاشر': 18, 'تمنطاشر': 18, 'تمنطعش': 18,
+    'تسعتاشر': 19, 'تسعطاشر': 19, 'تسعطعش': 19,
+})
+MULT_MAP.update({'تلاف': 1000, 'تالاف': 1000})
+DUAL_MAP.update({
+    # MSA nominative duals ("مئتان", "ألفان") alongside the genitive ones
+    'مئتان': 200, 'مائتان': 200, 'ألفان': 2000, 'الفان': 2000,
+    'مليونين': 2_000_000, 'مليونان': 2_000_000, 'مليارين': 2_000_000_000, 'ملياران': 2_000_000_000,
+})
+GLUED_HUNDREDS_MAP.update({
+    stem + suffix: value * 100
+    for stem, value in {'ربع': 4, 'تمن': 8, 'تمان': 8}.items()    # Egyptian "ربعمية", "تمنمية"
+    for suffix in _HUNDRED_SUFFIXES
+})
 
-# Plural multipliers only count after a number ("ثلاثة آلاف" = 3000). On their
-# own they mean "thousands of" / "millions of", not 1000 / 1000000:
-# "آلاف الأشخاص" must stay words.
-PLURAL_MULTIPLIERS = {'آلاف', 'الاف', 'ألاف', 'ملايين', 'مليارات'}
+# ── Words that are only sometimes numbers ─────────────────────────────────────
+# Plural multipliers count only right after a number ("ثلاثة آلاف" = 3000). On
+# their own they mean "thousands of", not 1000: "آلاف الأشخاص" stays words.
+PLURAL_MULTIPLIERS = {'آلاف', 'الاف', 'ألاف', 'تلاف', 'تالاف', 'ملايين', 'مليارات'}
+
+# "one" words that far more often mean "someone" / "one of" / Sunday. Numeric
+# only when a tens word follows: "أحد عشر" = 11, "إحدى وعشرين" = 21, but
+# "لا أحد" and "إحدى المدارس" stay words. Includes و-fused forms, since
+# splitting "وأحد" apart would change text that isn't a number at all.
+BEFORE_TENS_ONLY = {'أحد': 1, 'احد': 1, 'إحدى': 1, 'احدى': 1, 'وأحد': 1, 'وإحدى': 1, 'واحدى': 1}
+
+# Egyptian "تمن" (8) is also "price". Numeric only before a multiplier:
+# "تمن تلاف" = 8000, "تمن مية" = 800.
+BEFORE_MULT_ONLY = {'تمن': 8, 'وتمن': 8}
+
+# Half/quarter count only right after "و" + a multiplier: "مليون ونص" = 1500000,
+# "مية وربع" = 125. "الساعة خمسة ونص" (half past five) stays words.
+FRACTIONS = {'نص': 0.5, 'نصف': 0.5, 'ربع': 0.25, 'ونص': 0.5, 'ونصف': 0.5, 'وربع': 0.25}
+
+# Words that are numbers only when they aren't standing alone in one of these
+# contexts. Each rule comes from a real transcript misfire and only looks at
+# the neighbouring word, so a number with other number words around it is
+# never affected ("مية وخمسين" is still 150).
+#
+# Egyptian "مية" is "water" at least as often as "hundred": alone, it's a word,
+# unless a currency or unit follows ("مية جنيه", "مية درجة") or it's a
+# percentage ("مية في المية" = 100%).
+NEEDS_NUMBER_NEIGHBOUR = {'مية', 'ميه'}
+UNIT_WORDS = {
+    'جنيه', 'ريال', 'دولار', 'درهم', 'دينار', 'ليرة', 'يورو', 'درجة', 'درجه',
+    'كيلو', 'جرام', 'جرامات', 'متر', 'كيلومتر', 'لتر', 'سنة', 'سنه', 'يوم', 'ساعة', 'ساعه',
+    'دقيقة', 'دقيقه', 'ثانية', 'مرة', 'مره', 'شخص', 'نفر', 'طالب',
+}
+PERCENT_WORDS = {'المية', 'الميه', 'المائة', 'المئة'}
+# ... or an amount word comes right before it ("حوالي مية", "دفعت مية").
+AMOUNT_PREVIOUS_WORDS = {'حوالي', 'بحوالي', 'تقريبا', 'ب', 'دفعت', 'اكتر', 'اكثر', 'أكثر', 'اقل', 'أقل'}
+# "ست البيت" / "كل ست بيت" = housewife, "ست الكل" = lady. A count takes an
+# indefinite noun ("ست حاجات"), never a definite one.
+LADY_WORDS = {'ست'}
+# "السادس عشر" = sixteenth: the ordinal's "عشر" is not the number 10.
+ORDINAL_PATTERN = re.compile(r'^ال(?:حادي|ثاني|ثالث|رابع|خامس|سادس|سابع|ثامن|تاسع)ة?$')
+TENS_AFTER_ORDINAL = {'عشر', 'عشرة'}
+# Fixed phrases, not quantities: "ألف عافية", "ألف مبروك", "شكرا مليون".
+IDIOM_SCALES = {'ألف', 'الف', 'مليون'}
+IDIOM_NEXT_WORDS = {'عافية', 'عافيه', 'سلامة', 'سلامه', 'مبروك', 'شكر', 'مرحبا', 'رحمة', 'رحمه'}
+IDIOM_PREVIOUS_WORDS = {'شكرا', 'مرسي', 'thanks'}
+# "كل واحد" = everyone, "واحدة من" = one of, "no one" / "one of".
+PRONOUN_ONES = {'واحد', 'واحدة', 'one'}
+PRONOUN_PREVIOUS_WORDS = {'كل', 'لكل', 'بكل', 'اي', 'أي', 'ولا', 'no', 'every', 'any', 'each', 'the'}
+PRONOUN_NEXT_WORDS = {'من', 'منهم', 'منهن', 'منكم', 'منا', 'فينا', 'فيهم', 'of'}
+
+for _word in BEFORE_TENS_ONLY:
+    SINGLE_MAP.pop(_word, None)   # "احد"/"إحدى" used to convert on their own
 
 SUM_CONNECTORS = {'و', 'and'}
 ALL_NUM_WORDS = (
     set(SINGLE_MAP.keys()) | set(TENS_MAP.keys()) | set(MULT_MAP.keys())
     | set(DUAL_MAP.keys()) | set(GLUED_HUNDREDS_MAP.keys()) | SUM_CONNECTORS
+    | set(BEFORE_TENS_ONLY) | set(BEFORE_MULT_ONLY) | set(FRACTIONS)
 )
-WORDS_RP = r'\b(' + '|'.join(re.escape(k) for k in ALL_NUM_WORDS) + r')\b'
+# A digit string is part of a span only when a multiplier word follows it, so
+# "5 مليون" and "11 ألف وتسعة وتسعين" parse as one number (5000000, 11099)
+# while ordinary digits elsewhere are never touched.
+_SCALE_WORDS = sorted((w for w, m in MULT_MAP.items() if m >= 1000), key=len, reverse=True)
+_DIGITS_BEFORE_SCALE = (
+    r'(?<![\d.])\d+(?:\.\d+)?(?=\s+(?:' + '|'.join(re.escape(w) for w in _SCALE_WORDS) + r')\b)'
+)
+WORDS_RP = r'(\b(?:' + '|'.join(re.escape(k) for k in ALL_NUM_WORDS) + r')\b|' + _DIGITS_BEFORE_SCALE + ')'
 # IGNORECASE: this runs before normalize_text lowercases, so "One hundred"
 # used to come out as "one 100" and "FIVE" was never converted.
 COMPOUND_NUM_PATTERN = re.compile(f'{WORDS_RP}(?:\\s+{WORDS_RP})*', re.IGNORECASE)
-# Joins digits spelled out one at a time ("2 0 2 4" → "2024"). Only a lone
-# digit on both sides: separate numbers must stay separate ("2020 3" used to
-# become "20203").
-DIGIT_SPACER_PATTERN = re.compile(r'(?<![\d.,])(\d)\s+(?=\d(?![\d.,]))')
+# Joins digits spelled out one at a time ("2 0 2 4" → "2024"): a run of three or
+# more lone digits. Separate numbers stay separate ("2020 3" used to become
+# "20203"), and so does a two-digit range ("3 4" = three or four, not 34).
+DIGIT_SPACER_PATTERN = re.compile(r'(?<![\d.,])\d(?:\s+\d(?![\d.,])){2,}')
 # Thousands-grouped quantities, e.g. "100,000" or "1,234,567" — the comma is
 # a formatting separator, not meaningful content; flatten to "100000".
 # Anchored on both sides so a comma between two separate numbers isn't read as
@@ -117,7 +207,13 @@ THOUSANDS_SEPARATOR_PATTERN = re.compile(r'(?<!\d)(?<!\d,)\d{1,3}(?:,\d{3})+(?!\
 # recognized number word, before compound matching runs.
 # Never split a word that is itself a number word starting with و: "واحد" is
 # "one", not "و" + "احد".
-_WAW_TARGET_WORDS = sorted((ALL_NUM_WORDS - SUM_CONNECTORS), key=len, reverse=True)
+# Context-only, plural and fraction words are left glued: splitting "وآلاف"
+# or "وأحد" changes the text even when they turn out not to be numbers.
+_WAW_TARGET_WORDS = sorted(
+    ALL_NUM_WORDS - SUM_CONNECTORS - set(BEFORE_TENS_ONLY) - set(BEFORE_MULT_ONLY)
+    - PLURAL_MULTIPLIERS - set(FRACTIONS),
+    key=len, reverse=True,
+)
 _WAW_WHOLE_WORDS = sorted((w for w in _WAW_TARGET_WORDS if w.startswith('و')), key=len, reverse=True)
 FUSED_WAW_PATTERN = re.compile(
     r'(?<!\S)(?!(?:' + '|'.join(re.escape(w) for w in _WAW_WHOLE_WORDS) + r')\b)'
@@ -142,7 +238,10 @@ TANWIN_FATHA_PATTERN = re.compile(r'ً')
 DIACRITICS_EXCEPT_FATHATAN_PATTERN = re.compile(r'[\u0617-\u061A\u064C-\u0652\u0640]')
 
 # Arabic-Indic (٠-٩) and Extended Arabic-Indic / Persian (۰-۹) digits.
-ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "0123456789" * 2)
+# Also the Arabic decimal (٫) and thousands (٬) separators.
+ARABIC_DIGITS = str.maketrans({
+    **dict(zip("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "0123456789" * 2)), "٫": ".", "٬": ",",
+})
 
 # Arabic presentation forms (ﻻ, ﷲ, ﷺ, contextual shapes like ﻣﺮﺣﺒﺎ) are
 # compatibility encodings of ordinary letters. NFKC turns them back; without it
@@ -163,11 +262,156 @@ LOOKALIKE_LETTERS = str.maketrans({
 _HAMZA_FOLD_FOR_LOOKUP = str.maketrans(MAP_LETTERS)
 
 
+def _is_number_stem(stem):
+    return stem in ALL_NUM_WORDS or stem.translate(_HAMZA_FOLD_FOR_LOOKUP) in ALL_NUM_WORDS
+
+
 def _fold_tanwin_alif(match):
     stem = match.group(1)
-    if stem in ALL_NUM_WORDS or stem.translate(_HAMZA_FOLD_FOR_LOOKUP) in ALL_NUM_WORDS:
+    # also a number word behind a fused و ("وألفاً"): the و split runs after this
+    if _is_number_stem(stem) or (stem.startswith('و') and _is_number_stem(stem[1:])):
         return stem
     return stem + 'ا'
+
+
+CONTEXT_PUNCTUATION_PATTERN = re.compile(r'[^\w]')
+
+
+def _classify_number_words(words, before="", after=()):
+    """Per word of a matched span: True if it belongs to a number, else text.
+
+    `before` is the word just before the span and `after` the (up to two) words
+    just after it, for the context rules.
+    """
+    def neighbour(i, step):
+        j = i + step
+        while 0 <= j < len(words) and words[j] in SUM_CONNECTORS:
+            j += step
+        return j if 0 <= j < len(words) else None
+
+    numeric = [False] * len(words)
+    for i, w in enumerate(words):
+        if w in SUM_CONNECTORS:
+            continue
+        if w[0].isdigit():
+            numeric[i] = True       # only matched when a multiplier follows
+            continue
+        nxt, prv = neighbour(i, 1), neighbour(i, -1)
+        if w in BEFORE_TENS_ONLY:
+            numeric[i] = nxt is not None and words[nxt] in TENS_MAP
+        elif w in BEFORE_MULT_ONLY:
+            numeric[i] = nxt is not None and words[nxt] in MULT_MAP
+        elif w in FRACTIONS:
+            joined_by_waw = w.startswith('و') or (i >= 2 and words[i - 1] == 'و')
+            numeric[i] = (joined_by_waw and prv is not None and numeric[prv]
+                          and (words[prv] in MULT_MAP or words[prv] in DUAL_MAP))
+        elif w in PLURAL_MULTIPLIERS:
+            numeric[i] = i > 0 and numeric[i - 1]
+        else:
+            numeric[i] = True
+
+    # Context rules, only for a word with no number word next to it in the span.
+    for i, w in enumerate(words):
+        if not numeric[i] or w in SUM_CONNECTORS:
+            continue
+        nxt, prv = neighbour(i, 1), neighbour(i, -1)
+        if (nxt is not None and numeric[nxt]) or (prv is not None and numeric[prv]):
+            continue
+        prev_word = words[i - 1] if i > 0 else before
+        following = list(words[i + 1:i + 3]) + list(after)
+        next_word = following[0] if following else ""
+        if w in NEEDS_NUMBER_NEIGHBOUR:
+            numeric[i] = next_word in UNIT_WORDS or prev_word in AMOUNT_PREVIOUS_WORDS or (
+                next_word == 'في' and len(following) > 1 and following[1] in PERCENT_WORDS)
+        elif w in LADY_WORDS and (next_word.startswith('ال') or next_word == 'بيت'):
+            numeric[i] = False
+        elif w in TENS_AFTER_ORDINAL and ORDINAL_PATTERN.match(prev_word):
+            numeric[i] = False
+        elif w in IDIOM_SCALES and (next_word in IDIOM_NEXT_WORDS or prev_word in IDIOM_PREVIOUS_WORDS):
+            numeric[i] = False
+        elif w in PRONOUN_ONES and (prev_word in PRONOUN_PREVIOUS_WORDS or next_word in PRONOUN_NEXT_WORDS):
+            numeric[i] = False
+
+    # A connector joins a number only between two number words, and never
+    # between two bare ones: "ثلاثة و اربعة" is a list ("3 و 4"), not 7.
+    for i, w in enumerate(words):
+        if w in SUM_CONNECTORS and 0 < i < len(words) - 1 and numeric[i - 1] and numeric[i + 1]:
+            numeric[i] = not (words[i - 1] in SINGLE_MAP and words[i + 1] in SINGLE_MAP)
+    # A fraction whose و was just ruled out isn't part of the number either.
+    for i, w in enumerate(words):
+        if w in FRACTIONS and not w.startswith('و') and numeric[i] and not numeric[i - 1]:
+            numeric[i] = False
+    return numeric
+
+
+def _words_to_number(words):
+    """Scale-based value of one number span ("خمسة وعشرين ألف" → 25000).
+
+    Keeps three registers: `total` (finished thousands/millions/billions
+    groups), `hundreds` and `below` (units + tens) of the group being built. A
+    multiplier closes the group, so everything said before "ألف" is multiplied
+    together, not just the last word ("ثلاثمائة وخمسين ألف" = 350000, not 50300).
+    """
+    total = hundreds = below = 0
+    last_scale = 0      # last thousands-or-bigger multiplier applied to total
+    last_mult = 0       # last multiplier of any size, for "ونص"/"وربع"
+    for w in words:
+        if w in SUM_CONNECTORS:
+            continue
+        if w[0].isdigit():
+            below += Decimal(w)
+            continue
+        if w in FRACTIONS:
+            part = int(last_mult * FRACTIONS[w])
+            if last_mult >= 1000:
+                total += part
+            else:
+                below += part
+            continue
+        if w in MULT_MAP:
+            m = last_mult = MULT_MAP[w]
+            if m == 100:
+                hundreds += max(1, below) * 100
+                below = 0
+                continue
+            group = hundreds + below
+            if group == 0 and total and m > last_scale:
+                total *= m                      # "ألف مليون" = 10**9
+            else:
+                total += max(1, group) * m
+            hundreds = below = 0
+            last_scale = m
+            continue
+        if w in DUAL_MAP:
+            v = DUAL_MAP[w]
+            if v >= 1000:
+                total += v
+                last_scale = last_mult = v // 2
+            else:
+                hundreds += v
+                last_mult = 100
+            continue
+        if w in GLUED_HUNDREDS_MAP:
+            hundreds += GLUED_HUNDREDS_MAP[w]
+            last_mult = 100
+            continue
+        for mapping in (SINGLE_MAP, TENS_MAP, BEFORE_TENS_ONLY, BEFORE_MULT_ONLY):
+            if w in mapping:
+                below += mapping[w]
+                break
+    return total + hundreds + below
+
+
+def _convert_number_run(run):
+    if len(run) > 1 and all(w in SINGLE_MAP for w in run):
+        digits = [str(SINGLE_MAP[w]) for w in run]
+        # Two bare ones are a spoken range ("تلات أربع حبات" = 3 or 4, not 34);
+        # three or more are read out digit by digit ("صفر واحد اتنين" = 012).
+        return " ".join(digits) if len(run) == 2 else "".join(digits)
+    value = Decimal(_words_to_number(run))
+    if value == value.to_integral_value():
+        return str(int(value))
+    return format(value.normalize(), 'f')     # "2.75 ألف" is 2750, "0.0005 ألف" is 0.5
 
 
 def normalize_numbers(text: str) -> str:
@@ -183,17 +427,17 @@ def normalize_numbers(text: str) -> str:
     Diacritics and tatweel are stripped from the whole text first, so fully
     vowelled number words ("ألفٍ", "خمسةٍ") match like bare ones.
 
-    Known unresolved edge case: a glued hundred-compound followed by "و" +
-    tens, then a multiplier ("ثلاثمائة وخمسين ألف", want 350000) computes
-    50300 instead — the tens gets multiplied alone instead of combined with
-    the hundred first. Rare in practice (~8 hits across a 115k-line, two-
-    dataset benchmark corpus); a linear single-pass parser can't resolve
-    this without breaking "ميتين و سبع مية" (900, correctly handled), which
-    needs the opposite treatment of the same connector. Needs real lookahead
-    to fix properly, not attempted here.
+    Values are built scale by scale (see _words_to_number), so a compound
+    before a multiplier is multiplied as a whole: "خمسة وعشرين ألف" = 25000,
+    "ثلاثمائة وخمسين ألف" = 350000. Also covers MSA nominative duals
+    ("مئتان", "ألفان"), Egyptian and Levantine spellings ("تلاتة", "اتناشر",
+    "ربعمية", "تلات تلاف"), a digit string before a multiplier ("3.5 مليون"),
+    and "ونص"/"وربع" after a multiplier ("مليون ونص").
 
-    Does not handle fraction/half words ("نص", "ربع") or Levantine forms not
-    covered above, they're left as plain words.
+    Does not handle fractions anywhere else ("خمسة ونص" stays words, it's
+    usually a time), ordinals ("الثالث"), or words that are numbers only in some
+    contexts beyond the ones listed in BEFORE_TENS_ONLY/BEFORE_MULT_ONLY
+    ("واحد" meaning "someone" still converts).
 
     Args:
         text: input string.
@@ -224,91 +468,27 @@ def normalize_numbers(text: str) -> str:
     def process_num_words(match):
         original = match.group(0).split()
         words = [w.lower() for w in original]
-
-        # A connector is arithmetic only *between* two number words. At either
-        # edge of a span it's ordinary text and must survive ("ثلاثة و احنا"
-        # used to become "3 احنا"), and a span of nothing but connectors isn't a
-        # number at all ("و و" used to become "0").
-        start, end = 0, len(words)
-        while start < end and words[start] in SUM_CONNECTORS:
-            start += 1
-        while end > start and words[end - 1] in SUM_CONNECTORS:
-            end -= 1
-        if start == end:
-            return match.group(0)
-
-        # A connector between two bare ones is a list, not a sum: "ثلاثة و
-        # اربعة" is "three and four", not 7. Each side converts on its own.
-        core = words[start:end]
-        pieces, group = [], []
-        for i, w in enumerate(core):
-            if (w in SUM_CONNECTORS and 0 < i < len(core) - 1
-                    and core[i - 1] in SINGLE_MAP and core[i + 1] in SINGLE_MAP):
-                pieces += [convert(group), original[start + i]]
-                group = []
-            else:
-                group.append(w)
-        pieces.append(convert(group))
-        return " ".join(original[:start] + pieces + original[end:])
-
-    def convert(words):
-        if all(w in PLURAL_MULTIPLIERS for w in words):
-            return " ".join(words)
-        if len(words) == 1:
-            w = words[0]
-            for mapping in (SINGLE_MAP, TENS_MAP, MULT_MAP, DUAL_MAP, GLUED_HUNDREDS_MAP):
-                if w in mapping:
-                    return str(mapping[w])
-            return w
-
-        has_summing_clue = any(
-            w in TENS_MAP or w in MULT_MAP or w in SUM_CONNECTORS or w in DUAL_MAP or w in GLUED_HUNDREDS_MAP
-            for w in words
-        )
-
-        if has_summing_clue:
-            total = 0
-            current = 0
-            pending_mult = 1  # accumulates a chain of adjacent MULT words,
-            # e.g. "مائة ألف" (hundred thousand) → 100*1000, flushed as one
-            # unit once a new segment starts.
-            # SINGLE/TENS/DUAL/GLUED_HUNDREDS all just contribute a value to
-            # the current segment ("ثلاثمائة وخمسين ألف" needs 300+50=350
-            # combined into current *before* "ألف" multiplies the whole
-            # thing to 350000, not 300 flushed away immediately and only the
-            # trailing 50 getting multiplied).
-            for w in words:
-                if w in SUM_CONNECTORS:
-                    # a connector between two bare multipliers means they're
-                    # separate additive terms ("ألف ومئة" = 1000+100), not a
-                    # chain, so it forces the same flush a new segment does.
-                    if current or pending_mult != 1:
-                        total += max(1, current) * pending_mult
-                        current, pending_mult = 0, 1
-                    continue
-                if w in MULT_MAP:
-                    # chain instead of flushing immediately, so "خمسة مائة
-                    # ألف" (five hundred thousand) multiplies all three
-                    # together (500000) instead of only the first (500).
-                    pending_mult *= MULT_MAP[w]
-                    continue
-                for mapping in (SINGLE_MAP, TENS_MAP, DUAL_MAP, GLUED_HUNDREDS_MAP):
-                    if w in mapping:
-                        if pending_mult != 1:
-                            total += max(1, current) * pending_mult
-                            current, pending_mult = 0, 1
-                        current += mapping[w]
-                        break
-            if current or pending_mult != 1:
-                total += max(1, current) * pending_mult
-            return str(total)
-        else:
-            return "".join(str(SINGLE_MAP[w]) for w in words if w in SINGLE_MAP)
+        before = match.string[:match.start()].split()
+        after = match.string[match.end():].split()
+        before = CONTEXT_PUNCTUATION_PATTERN.sub('', before[-1]).lower() if before else ""
+        after = [CONTEXT_PUNCTUATION_PATTERN.sub('', w).lower() for w in after[:2]]
+        out, run = [], []
+        for word, orig, is_number in zip(words, original, _classify_number_words(words, before, after)):
+            if is_number:
+                run.append(word)
+                continue
+            if run:
+                out.append(_convert_number_run(run))
+                run = []
+            out.append(orig)
+        if run:
+            out.append(_convert_number_run(run))
+        return " ".join(out)
 
     text = COMPOUND_NUM_PATTERN.sub(process_num_words, text)
 
     # 3.3 Collapse spaces between adjacent digits ("2 0 2 4" → "2024")
-    text = DIGIT_SPACER_PATTERN.sub(r'\1', text)
+    text = DIGIT_SPACER_PATTERN.sub(lambda m: WHITESPACE_PATTERN.sub('', m.group(0)), text)
 
     # 3.4 Flatten thousands-separator commas in quantities ("100,000" -> "100000").
     text = THOUSANDS_SEPARATOR_PATTERN.sub(lambda m: m.group(0).replace(",", ""), text)
@@ -325,6 +505,11 @@ ELLIPSIS_PATTERN = re.compile(r"\.(?:\s*\.)+")
 # "<noise>". Doesn't match nested/malformed brackets like "<<eot>>" past
 # the first ">", which is fine, real transcript tags aren't nested.
 TAG_PATTERN = re.compile(r"<[^<>]*>")
+
+# A "." that isn't a decimal point. The punctuation strip keeps dots and then
+# removes only these, so "3.5" survives even when "." isn't enabled punctuation
+# (it used to become "3 5", a different number).
+NON_DECIMAL_DOT_PATTERN = re.compile(r"(?<!\d)\.|\.(?!\d)")
 
 
 def normalize_text(
@@ -423,13 +608,16 @@ def normalize_text(
         punc_to_keep = "".join(re.escape(p) for p in enable_punc)
         # Keep Arabic letters, a-z, 0-9, whitespace, apostrophes, AND enabled punctuation
         # (both straight ' and curly ’, so English contractions like "I'll"/"that's" survive)
-        dynamic_pattern = re.compile(rf"[^ء-يa-z0-9\s{punc_to_keep}_'’]")  # include _ for __EOT_TOKEN__
+        dynamic_pattern = re.compile(rf"[^ء-يa-z0-9\s{punc_to_keep}_'’.]")  # include _ for __EOT_TOKEN__
         text = dynamic_pattern.sub(" ", text)
+        if "." not in enable_punc:
+            text = NON_DECIMAL_DOT_PATTERN.sub(" ", text)
     else:
         # Keeps: Arabic letters, a-z, 0-9, space, and apostrophes (straight '
         # and curly ’) so contractions survive. Need to include _ for __EOT_TOKEN__
-        temp_pattern = re.compile(r"[^ء-يa-z0-9\s_'’]")
+        temp_pattern = re.compile(r"[^ء-يa-z0-9\s_'’.]")
         text = temp_pattern.sub(" ", text)
+        text = NON_DECIMAL_DOT_PATTERN.sub(" ", text)
 
     # Re-insert eot_token
     if active_eot and " __eot_token__ " in text:
