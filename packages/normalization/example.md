@@ -100,5 +100,43 @@ normalize_numbers("مائة ألف")
 # -> '100000'
 ```
 
-See its docstring for the known unresolved edge case (a glued
-hundred-compound + tens + a trailing multiplier).
+A whole compound before a multiplier is multiplied together:
+
+```python
+normalize_numbers("خمسة وعشرين ألف")
+# -> '25000'
+```
+
+Dialect spellings, a digit string before a multiplier, and "ونص" after one:
+
+```python
+normalize_numbers("تلات تلاف وخمستاشر")
+# -> '3015'
+normalize_numbers("3.5 مليون")
+# -> '3500000'
+normalize_numbers("مليون ونص")
+# -> '1500000'
+```
+
+Context rules: words that aren't numbers in context stay words
+("أحد" counts only before a tens word, "كل واحد" is "everyone"):
+
+```python
+normalize_numbers("لا أحد يعرف كل واحد")
+# -> 'لا أحد يعرف كل واحد'
+normalize_numbers("أحد عشر")
+# -> '11'
+```
+
+## Tanwin and decimals in normalize_text
+
+Tanwin on an ordinary word folds to a plain alif instead of truncating
+it, and a decimal point survives even though "." isn't enabled punctuation:
+
+```python
+normalize_text("شكراً جداً، السعر 2.75 دولار.")
+# -> 'شكرا جدا السعر 2.75 دولار'
+```
+
+See the `normalize_numbers` docstring for what is still not handled
+(fractions outside "ونص"/"وربع" after a multiplier, ordinals).
