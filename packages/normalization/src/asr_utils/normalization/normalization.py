@@ -98,14 +98,28 @@ FUSED_WAW_PATTERN = re.compile(
     r'(?<!\S)و(?=(?:' + '|'.join(re.escape(w) for w in _WAW_TARGET_WORDS) + r')\b)'
 )
 
-# Tanwin fathah (ً) written on a carrier alif at a word's end ("أربعاً")
-# leaves an orthographic ا behind that isn't part of the word's map key
-# ("اربع"); a plain diacritic strip alone can't fix this since it only
-# drops the mark, not the alif that was carrying it. Drop both together
-# before number-word matching. Other tanwin marks don't take a carrier
-# alif, so they're left to the general DIACRITICS_PATTERN strip elsewhere.
-TANWIN_ALIF_PATTERN = re.compile(r'اً')
+# Tanwin fathah (ً) on a carrier alif at a word's end, in either codepoint
+# order ("شكراً" alif-then-mark, "شكرًا" mark-then-alif). The alif+mark pair
+# is just another alif variant, so it folds to a plain ا like أ/إ/آ do in
+# MAP_LETTERS: "شكراً" → "شكرا", "جداً" → "جدا".
+#
+# Only a number word also drops the carrier alif, because the alif isn't part
+# of its map key ("أربعاً" → "أربع", which then matches). Deleting the alif
+# unconditionally used to truncate every ordinary word: "شكراً" → "شكر".
+TANWIN_ALIF_PATTERN = re.compile(r'([ء-ي]+)(?:اً|ًا)')
 TANWIN_FATHA_PATTERN = re.compile(r'ً')
+
+
+# Lookup-only hamza fold: number-word keys are spelled with bare alif
+# ("اربع"), but this runs before normalize_text's own letter fold.
+_HAMZA_FOLD_FOR_LOOKUP = str.maketrans(MAP_LETTERS)
+
+
+def _fold_tanwin_alif(match):
+    stem = match.group(1)
+    if stem in ALL_NUM_WORDS or stem.translate(_HAMZA_FOLD_FOR_LOOKUP) in ALL_NUM_WORDS:
+        return stem
+    return stem + 'ا'
 
 
 def normalize_numbers(text: str) -> str:
@@ -116,7 +130,8 @@ def normalize_numbers(text: str) -> str:
     dual-inflected hundreds/thousands ("الفين", "مئتين"), glued
     hundred-compounds ("ثلاثمائة" → 300), million/billion, the colloquial
     "مية"/"ميه"/"مئه" hundred spellings, dialect fused teens ("خمس طعش" →
-    15), and tanwin-carrier alifs on number words ("أربعاً").
+    15), and tanwin-carrier alifs on number words ("أربعاً"). Tanwin on any
+    other word folds to a plain alif ("شكراً" → "شكرا"), never truncates it.
 
     Known unresolved edge case: a glued hundred-compound followed by "و" +
     tens, then a multiplier ("ثلاثمائة وخمسين ألف", want 350000) computes
@@ -142,9 +157,10 @@ def normalize_numbers(text: str) -> str:
     # 3.1 Arabic-Indic digits → ASCII digits
     text = text.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
 
-    # 3.1b Tanwin-carrier alif ("أربعاً" → "اربعا" → "اربع") before word
-    # matching, and fused و ("وعشرين" → "و عشرين") before compound matching.
-    text = TANWIN_ALIF_PATTERN.sub('', text)
+    # 3.1b Tanwin-carrier alif folded to a plain alif ("شكراً" → "شكرا"), or
+    # dropped on a number word ("أربعاً" → "أربع") before word matching, and
+    # fused و ("وعشرين" → "و عشرين") before compound matching.
+    text = TANWIN_ALIF_PATTERN.sub(_fold_tanwin_alif, text)
     text = TANWIN_FATHA_PATTERN.sub('', text)
     text = FUSED_WAW_PATTERN.sub('و ', text)
 
