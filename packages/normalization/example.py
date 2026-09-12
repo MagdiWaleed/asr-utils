@@ -42,6 +42,18 @@ def main():
     # normalize_numbers, standalone
     print(normalize_numbers("ثلاثمائة وخمسين"))
     print(normalize_numbers("مائة ألف"))
+    # a whole compound before a multiplier is multiplied together
+    print(normalize_numbers("خمسة وعشرين ألف"))
+    # dialect spellings, a digit string before a multiplier, "ونص" after one
+    print(normalize_numbers("تلات تلاف وخمستاشر"))
+    print(normalize_numbers("3.5 مليون"))
+    print(normalize_numbers("مليون ونص"))
+    # context rules: words that aren't numbers here stay words
+    print(normalize_numbers("لا أحد يعرف كل واحد"))
+    print(normalize_numbers("أحد عشر"))
+
+    # tanwin on an ordinary word folds to plain alif, decimals survive
+    print(normalize_text("شكراً جداً، السعر 2.75 دولار."))
 
 
 if __name__ == "__main__":
