@@ -6,8 +6,8 @@ all import from one shared namespace: `asr_utils.<category>`.
 
 ```
 packages/
-  normalization/         asr-normalization      v3.0.0
-  metrics/                asr-metrics             v0.1.0
+  normalization/         asr-normalization      v3.1.0
+  metrics/                asr-metrics             v1.0.0
   noise_simulation/       asr-noise-simulation    v0.1.0 (skeleton, no code yet)
 ```
 
@@ -19,7 +19,7 @@ the category you need, pinned to its own tag:
 
 **normalization**
 ```
-pip install "git+ssh://git@github.com/MagdiWaleed/asr-utils.git@normalization-v3.0.0#subdirectory=packages/normalization"
+pip install "git+ssh://git@github.com/MagdiWaleed/asr-utils.git@normalization-v3.1.0#subdirectory=packages/normalization"
 ```
 ```python
 from asr_utils.normalization import normalize_text, normalize_numbers
@@ -27,7 +27,7 @@ from asr_utils.normalization import normalize_text, normalize_numbers
 
 **metrics**
 ```
-pip install "git+ssh://git@github.com/MagdiWaleed/asr-utils.git@metrics-v0.1.0#subdirectory=packages/metrics"
+pip install "git+ssh://git@github.com/MagdiWaleed/asr-utils.git@metrics-v1.0.0#subdirectory=packages/metrics"
 ```
 ```python
 from asr_utils.metrics import calculate_wer, calculate_cer
