@@ -73,6 +73,24 @@ def test_normalize_numbers_dialect_fused_teens():
 def test_normalize_numbers_tanwin_carrier_alif():
     # diacritic-timing bug: a tanwin-carrier alif on a number word
     assert normalize_numbers("ثلاثاً و عشرين") == "23"
+    # same, with the mark typed before the alif (used to give "ثلاثا 20")
+    assert normalize_numbers("ثلاثًا و عشرين") == "23"
+    assert normalize_numbers("اربعاً") == "4"
+    # hamza-spelled number word: carrier alif still dropped, output unchanged
+    assert normalize_numbers("أربعاً") == "أربع"
+
+
+def test_normalize_text_tanwin_alif_folds_to_plain_alif():
+    # The carrier alif is an alif variant, not noise: it folds to ا like أ/إ/آ,
+    # it must not be deleted. Used to truncate: "شكراً" -> "شكر".
+    assert normalize_text("شكراً") == "شكرا"
+    assert normalize_text("طبعاً") == "طبعا"
+    assert normalize_text("جداً") == "جدا"
+    assert normalize_text("أيضاً") == "ايضا"
+    # both codepoint orders give the same result
+    assert normalize_text("جداً") == normalize_text("جدًا") == "جدا"
+    # standalone normalize_numbers must not truncate non-number words either
+    assert normalize_numbers("شكراً جزيلاً") == "شكرا جزيلا"
 
 
 def test_normalize_text_empty_string():
