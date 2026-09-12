@@ -45,6 +45,17 @@ def test_normalize_numbers_dual_forms():
     assert normalize_numbers("مئتين الف") == "200000"  # dual directly chained into a multiplier
 
 
+def test_normalize_numbers_plural_thousands():
+    # plural "thousands" was missing while plural "millions" was present, so
+    # this came out half-converted as "3 الاف 207"
+    assert normalize_numbers("ثلاثة آلاف ومائتين وسبع") == "3207"
+    assert normalize_numbers("عشرة الاف") == "10000"
+    # without a number before them they mean "thousands of", not 1000
+    assert normalize_numbers("آلاف الأشخاص") == "آلاف الأشخاص"
+    assert normalize_numbers("ملايين الناس") == "ملايين الناس"
+    assert normalize_numbers("خمسة ملايين") == "5000000"
+
+
 def test_normalize_numbers_million_billion():
     # bug D
     assert normalize_numbers("ستين مليون") == "60000000"
@@ -76,8 +87,8 @@ def test_normalize_numbers_tanwin_carrier_alif():
     # same, with the mark typed before the alif (used to give "ثلاثا 20")
     assert normalize_numbers("ثلاثًا و عشرين") == "23"
     assert normalize_numbers("اربعاً") == "4"
-    # hamza-spelled number word: carrier alif still dropped, output unchanged
-    assert normalize_numbers("أربعاً") == "أربع"
+    # hamza-spelled number word converts the same as the bare-alif spelling
+    assert normalize_numbers("أربعاً") == "4"
 
 
 def test_normalize_text_tanwin_alif_folds_to_plain_alif():
@@ -91,6 +102,83 @@ def test_normalize_text_tanwin_alif_folds_to_plain_alif():
     assert normalize_text("جداً") == normalize_text("جدًا") == "جدا"
     # standalone normalize_numbers must not truncate non-number words either
     assert normalize_numbers("شكراً جزيلاً") == "شكرا جزيلا"
+
+
+def test_normalize_numbers_edge_connectors_survive():
+    # a connector at the edge of a number span is ordinary text, not arithmetic
+    assert normalize_numbers("عندي ثلاثة و احنا رايحين") == "عندي 3 و احنا رايحين"
+    assert normalize_numbers("قال و ثلاثة كمان") == "قال و 3 كمان"
+    assert normalize_numbers("جبت وخمسة اقلام") == "جبت و 5 اقلام"
+    assert normalize_numbers("one and we left") == "1 and we left"
+    # connectors still sum *inside* a number
+    assert normalize_numbers("خمسة وعشرين") == "25"
+    assert normalize_numbers("ألف ومئة") == "1100"
+
+
+def test_normalize_numbers_connector_only_span_is_not_zero():
+    assert normalize_numbers("هو و و راح") == "هو و و راح"
+    assert normalize_numbers("and and then") == "and and then"
+
+
+def test_normalize_numbers_two_ones_joined_by_connector_are_a_list():
+    assert normalize_numbers("ثلاثة و اربعة") == "3 و 4"
+    assert normalize_numbers("one and two") == "1 and 2"
+    # a one followed by a tens word is still a single number
+    assert normalize_numbers("واحد و عشرين") == "21"
+    # "واحد" itself starts with و but is not a fused connector
+    assert normalize_numbers("قابلت واحد صاحبي") == "قابلت 1 صاحبي"
+    assert normalize_numbers("وواحد") == "و 1"
+
+
+def test_normalize_numbers_case_insensitive_english():
+    assert normalize_numbers("One hundred") == "100"
+    assert normalize_numbers("FIVE people") == "5 people"
+    assert normalize_text("Twenty Three") == "23"
+
+
+def test_normalize_numbers_hamza_spelled_words():
+    assert normalize_numbers("أربعة") == normalize_numbers("اربعة") == "4"
+    assert normalize_numbers("أربعين") == "40"
+    assert normalize_numbers("إثنين") == "2"
+    # "أحد" is left alone on purpose: usually "someone", not "one"
+    assert normalize_text("لا أحد") == "لا احد"
+
+
+def test_normalize_numbers_decomposed_unicode():
+    import unicodedata
+    assert normalize_numbers(unicodedata.normalize("NFD", "أربعة")) == "4"
+    assert normalize_text(unicodedata.normalize("NFD", "شكراً")) == "شكرا"
+
+
+def test_normalize_numbers_separate_numbers_stay_separate():
+    assert normalize_numbers("في 2020 3 مرات") == "في 2020 3 مرات"
+    assert normalize_numbers("2 0 2 4") == "2024"
+    assert normalize_numbers("من 2019,2020") == "من 2019,2020"
+    assert normalize_numbers("1,234,567") == "1234567"
+    assert normalize_numbers("100,000, then") == "100000, then"
+
+
+def test_normalize_numbers_vowelled_number_words():
+    # a diacritic right after a number word used to split the number in two
+    assert normalize_numbers("ألفٍ وسبعمائة وثلاثة وتسعين") == "1793"
+    assert normalize_numbers("خمسةٍ وعشرين") == "25"
+    assert normalize_numbers("ثلاثةُ آلافٍ") == normalize_numbers("ثلاثة آلاف") == "3000"
+    assert normalize_text("جـداً") == "جدا"
+
+
+def test_normalize_numbers_extended_arabic_indic_digits():
+    assert normalize_numbers("٣ كتب ۳ كتب") == "3 كتب 3 كتب"
+
+
+def test_normalize_text_persian_lookalike_letters_fold():
+    assert normalize_text("کتاب یوم") == "كتاب يوم"
+    assert normalize_text("اثنین") == "2"
+
+
+def test_normalize_text_presentation_forms_decompose():
+    assert normalize_text("ﻻ يوجد") == "لا يوجد"
+    assert normalize_text("ﻣﺮﺣﺒﺎ") == "مرحبا"
+    assert normalize_text("قال ﷲ") == "قال الله"
 
 
 def test_normalize_text_empty_string():
@@ -223,3 +311,16 @@ if __name__ == "__main__":
     test_normalize_text_enable_special_tokens()
     test_normalize_text_full()
     print("ok")
+    test_normalize_text_tanwin_alif_folds_to_plain_alif()
+    test_normalize_numbers_edge_connectors_survive()
+    test_normalize_numbers_connector_only_span_is_not_zero()
+    test_normalize_numbers_two_ones_joined_by_connector_are_a_list()
+    test_normalize_numbers_case_insensitive_english()
+    test_normalize_numbers_hamza_spelled_words()
+    test_normalize_numbers_decomposed_unicode()
+    test_normalize_numbers_separate_numbers_stay_separate()
+    test_normalize_numbers_extended_arabic_indic_digits()
+    test_normalize_text_persian_lookalike_letters_fold()
+    test_normalize_text_presentation_forms_decompose()
+    test_normalize_numbers_vowelled_number_words()
+    test_normalize_numbers_plural_thousands()

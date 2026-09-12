@@ -51,7 +51,7 @@ TENS_MAP = {
 }
 MULT_MAP = {
     'مائه': 100, 'مائة': 100, 'مئة': 100, 'مئه': 100, 'مية': 100, 'ميه': 100, 'hundred': 100,
-    'الف': 1000, 'ألف': 1000, 'thousand': 1000,
+    'الف': 1000, 'ألف': 1000, 'آلاف': 1000, 'الاف': 1000, 'ألاف': 1000, 'thousand': 1000,
     'مليون': 1_000_000, 'ملايين': 1_000_000, 'million': 1_000_000,
     'مليار': 1_000_000_000, 'مليارات': 1_000_000_000, 'billion': 1_000_000_000,
 }
@@ -76,26 +76,52 @@ GLUED_HUNDREDS_MAP = {
     for stem, value in _HUNDREDS_ONES_STEMS.items()
     for suffix in _HUNDRED_SUFFIXES
 }
+# Hamza-spelled number words. normalize_numbers runs before normalize_text's
+# letter fold, so without these "أربعة" stayed a word while "اربعة" became 4.
+# Deliberately not "أحد": it means "someone" far more often than "one".
+SINGLE_MAP.update({
+    'أربعه': 4, 'أربعة': 4, 'أربع': 4,
+    'إثنان': 2, 'إثنين': 2, 'أثنين': 2, 'إثنتان': 2, 'إثنتين': 2, 'إثنا': 2, 'إثني': 2,
+})
+TENS_MAP.update({'أربعون': 40, 'أربعين': 40})
+
+# Plural multipliers only count after a number ("ثلاثة آلاف" = 3000). On their
+# own they mean "thousands of" / "millions of", not 1000 / 1000000:
+# "آلاف الأشخاص" must stay words.
+PLURAL_MULTIPLIERS = {'آلاف', 'الاف', 'ألاف', 'ملايين', 'مليارات'}
+
 SUM_CONNECTORS = {'و', 'and'}
 ALL_NUM_WORDS = (
     set(SINGLE_MAP.keys()) | set(TENS_MAP.keys()) | set(MULT_MAP.keys())
     | set(DUAL_MAP.keys()) | set(GLUED_HUNDREDS_MAP.keys()) | SUM_CONNECTORS
 )
 WORDS_RP = r'\b(' + '|'.join(re.escape(k) for k in ALL_NUM_WORDS) + r')\b'
-COMPOUND_NUM_PATTERN = re.compile(f'{WORDS_RP}(?:\\s+{WORDS_RP})*')
-DIGIT_SPACER_PATTERN = re.compile(r'(\d)\s+(?=\d)')
+# IGNORECASE: this runs before normalize_text lowercases, so "One hundred"
+# used to come out as "one 100" and "FIVE" was never converted.
+COMPOUND_NUM_PATTERN = re.compile(f'{WORDS_RP}(?:\\s+{WORDS_RP})*', re.IGNORECASE)
+# Joins digits spelled out one at a time ("2 0 2 4" → "2024"). Only a lone
+# digit on both sides: separate numbers must stay separate ("2020 3" used to
+# become "20203").
+DIGIT_SPACER_PATTERN = re.compile(r'(?<![\d.,])(\d)\s+(?=\d(?![\d.,]))')
 # Thousands-grouped quantities, e.g. "100,000" or "1,234,567" — the comma is
 # a formatting separator, not meaningful content; flatten to "100000".
-THOUSANDS_SEPARATOR_PATTERN = re.compile(r'\d{1,3}(?:,\d{3})+')
+# Anchored on both sides so a comma between two separate numbers isn't read as
+# a separator ("2019,2020" used to become "20192020"). A trailing punctuation
+# comma still works ("100,000, then").
+THOUSANDS_SEPARATOR_PATTERN = re.compile(r'(?<!\d)(?<!\d,)\d{1,3}(?:,\d{3})+(?!\d|,\d)')
 
 # Arabic "and" (و) is often written glued to the next number word with no
 # space ("وعشرين"), so Python's \b never fires between them (both are \w)
 # and COMPOUND_NUM_PATTERN can't see the connector at all. Split a leading
 # fused و off any word it's immediately attached to, iff that word is a
 # recognized number word, before compound matching runs.
+# Never split a word that is itself a number word starting with و: "واحد" is
+# "one", not "و" + "احد".
 _WAW_TARGET_WORDS = sorted((ALL_NUM_WORDS - SUM_CONNECTORS), key=len, reverse=True)
+_WAW_WHOLE_WORDS = sorted((w for w in _WAW_TARGET_WORDS if w.startswith('و')), key=len, reverse=True)
 FUSED_WAW_PATTERN = re.compile(
-    r'(?<!\S)و(?=(?:' + '|'.join(re.escape(w) for w in _WAW_TARGET_WORDS) + r')\b)'
+    r'(?<!\S)(?!(?:' + '|'.join(re.escape(w) for w in _WAW_WHOLE_WORDS) + r')\b)'
+    r'و(?=(?:' + '|'.join(re.escape(w) for w in _WAW_TARGET_WORDS) + r')\b)'
 )
 
 # Tanwin fathah (ً) on a carrier alif at a word's end, in either codepoint
@@ -108,6 +134,28 @@ FUSED_WAW_PATTERN = re.compile(
 # unconditionally used to truncate every ordinary word: "شكراً" → "شكر".
 TANWIN_ALIF_PATTERN = re.compile(r'([ء-ي]+)(?:اً|ًا)')
 TANWIN_FATHA_PATTERN = re.compile(r'ً')
+
+# Every other diacritic and tatweel (DIACRITICS_PATTERN minus U+064B). Stripped
+# before number matching: a combining mark after a number word ends the regex
+# word there, so "ألفٍ وسبعمائة وثلاثة وتسعين" split into "1000 793" instead
+# of 1793. U+064B stays until the tanwin-alif fold below has used it.
+DIACRITICS_EXCEPT_FATHATAN_PATTERN = re.compile(r'[\u0617-\u061A\u064C-\u0652\u0640]')
+
+# Arabic-Indic (٠-٩) and Extended Arabic-Indic / Persian (۰-۹) digits.
+ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "0123456789" * 2)
+
+# Arabic presentation forms (ﻻ, ﷲ, ﷺ, contextual shapes like ﻣﺮﺣﺒﺎ) are
+# compatibility encodings of ordinary letters. NFKC turns them back; without it
+# they fell through to the symbol strip and were deleted, whole words included.
+# U+FEFF (BOM) excluded: it has no letter to decompose to.
+PRESENTATION_FORMS_PATTERN = re.compile(r'[\uFB50-\uFDFF\uFE70-\uFEFC]+')
+
+# Persian/Urdu codepoints that render identically to an Arabic letter, common
+# from Persian keyboard layouts. Folded rather than stripped: the Urdu/Persian
+# strip used to delete them mid-word ("کتاب یوم" → "تاب وم").
+LOOKALIKE_LETTERS = str.maketrans({
+    "ی": "ي", "ک": "ك", "ە": "ه", "ھ": "ه", "ہ": "ه", "ۃ": "ة",
+})
 
 
 # Lookup-only hamza fold: number-word keys are spelled with bare alif
@@ -132,6 +180,8 @@ def normalize_numbers(text: str) -> str:
     "مية"/"ميه"/"مئه" hundred spellings, dialect fused teens ("خمس طعش" →
     15), and tanwin-carrier alifs on number words ("أربعاً"). Tanwin on any
     other word folds to a plain alif ("شكراً" → "شكرا"), never truncates it.
+    Diacritics and tatweel are stripped from the whole text first, so fully
+    vowelled number words ("ألفٍ", "خمسةٍ") match like bare ones.
 
     Known unresolved edge case: a glued hundred-compound followed by "و" +
     tens, then a multiplier ("ثلاثمائة وخمسين ألف", want 350000) computes
@@ -154,20 +204,56 @@ def normalize_numbers(text: str) -> str:
     if not text:
         return ""
 
-    # 3.1 Arabic-Indic digits → ASCII digits
-    text = text.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+    # Composed form first: a decomposed hamza (ا + U+0654) can't match a
+    # number-word key or the tanwin pattern below.
+    text = unicodedata.normalize("NFC", text)
 
-    # 3.1b Tanwin-carrier alif folded to a plain alif ("شكراً" → "شكرا"), or
-    # dropped on a number word ("أربعاً" → "أربع") before word matching, and
-    # fused و ("وعشرين" → "و عشرين") before compound matching.
+    # 3.1 Arabic-Indic and Extended Arabic-Indic digits → ASCII digits
+    text = text.translate(ARABIC_DIGITS)
+
+    # 3.1b Diacritics off, then the tanwin-carrier alif folded to a plain alif
+    # ("شكراً" → "شكرا"), or dropped on a number word ("أربعاً" → "أربع"),
+    # before word matching; and fused و ("وعشرين" → "و عشرين") before
+    # compound matching.
+    text = DIACRITICS_EXCEPT_FATHATAN_PATTERN.sub('', text)
     text = TANWIN_ALIF_PATTERN.sub(_fold_tanwin_alif, text)
     text = TANWIN_FATHA_PATTERN.sub('', text)
     text = FUSED_WAW_PATTERN.sub('و ', text)
 
     # 3.2 Number word spans → digit strings
     def process_num_words(match):
-        words = match.group(0).split()
+        original = match.group(0).split()
+        words = [w.lower() for w in original]
 
+        # A connector is arithmetic only *between* two number words. At either
+        # edge of a span it's ordinary text and must survive ("ثلاثة و احنا"
+        # used to become "3 احنا"), and a span of nothing but connectors isn't a
+        # number at all ("و و" used to become "0").
+        start, end = 0, len(words)
+        while start < end and words[start] in SUM_CONNECTORS:
+            start += 1
+        while end > start and words[end - 1] in SUM_CONNECTORS:
+            end -= 1
+        if start == end:
+            return match.group(0)
+
+        # A connector between two bare ones is a list, not a sum: "ثلاثة و
+        # اربعة" is "three and four", not 7. Each side converts on its own.
+        core = words[start:end]
+        pieces, group = [], []
+        for i, w in enumerate(core):
+            if (w in SUM_CONNECTORS and 0 < i < len(core) - 1
+                    and core[i - 1] in SINGLE_MAP and core[i + 1] in SINGLE_MAP):
+                pieces += [convert(group), original[start + i]]
+                group = []
+            else:
+                group.append(w)
+        pieces.append(convert(group))
+        return " ".join(original[:start] + pieces + original[end:])
+
+    def convert(words):
+        if all(w in PLURAL_MULTIPLIERS for w in words):
+            return " ".join(words)
         if len(words) == 1:
             w = words[0]
             for mapping in (SINGLE_MAP, TENS_MAP, MULT_MAP, DUAL_MAP, GLUED_HUNDREDS_MAP):
@@ -288,6 +374,10 @@ def normalize_text(
     # isn't a decimal point (single "." between digits is left untouched
     # further down), just a run-on/trailing-off marker.
     text = ELLIPSIS_PATTERN.sub(".", text)
+
+    # Before number matching, so "اثنین" (Persian ی) and "ﺛﻼﺛﺔ" convert too.
+    text = PRESENTATION_FORMS_PATTERN.sub(lambda m: unicodedata.normalize("NFKC", m.group(0)), text)
+    text = text.translate(LOOKALIKE_LETTERS)
 
     text = normalize_numbers(text)
 
