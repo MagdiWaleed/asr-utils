@@ -256,6 +256,12 @@ LOOKALIKE_LETTERS = str.maketrans({
     "ی": "ي", "ک": "ك", "ە": "ه", "ھ": "ه", "ہ": "ه", "ۃ": "ة",
 })
 
+# The Arabic percent sign (٪ U+066A) is the same symbol as "%". Folded so one
+# spelling reaches every later step: "٪" falls inside the Urdu/extended-Arabic
+# strip range, so without this it was deleted there while "%" survived, and
+# enable_punc=["%"] never matched the Arabic spelling at all.
+PERCENT_SIGN = str.maketrans({"٪": "%"})
+
 
 # Lookup-only hamza fold: number-word keys are spelled with bare alif
 # ("اربع"), but this runs before normalize_text's own letter fold.
@@ -511,6 +517,21 @@ TAG_PATTERN = re.compile(r"<[^<>]*>")
 # (it used to become "3 5", a different number).
 NON_DECIMAL_DOT_PATTERN = re.compile(r"(?<!\d)\.|\.(?!\d)")
 
+# A "%" belongs to the number it is written with, and Arabic writes it on
+# either side ("50%" and the prefixed "%50"). Canonical output is number then
+# sign, glued. The sign binds to whichever side it already touches without a
+# space, so "2020 %50" stays two numbers ("2020 50%") instead of fusing into
+# one "2020%50" token; when it's spaced on both sides ("50 % 60") it binds
+# left, like ordinary typography.
+PERCENT_GLUED_BEFORE_PATTERN = re.compile(r"(?<!\d)%(\d+(?:\.\d+)?)")
+PERCENT_SPACED_AFTER_PATTERN = re.compile(r"(\d) %(?!\d)")
+PERCENT_SPACED_BEFORE_PATTERN = re.compile(r"(?<!\d)(?<!\d )% (\d+(?:\.\d+)?)")
+# A "%" not bound to a number is stripped like the rest of the symbols.
+STRAY_PERCENT_PATTERN = re.compile(r"(?<!\d)%")
+# A ":" that isn't between digits, i.e. not a clock time or a score. Kept
+# like a decimal point; every other colon is stripped.
+NON_TIME_COLON_PATTERN = re.compile(r"(?<!\d):|:(?!\d)")
+
 
 def normalize_text(
     text: str,
@@ -518,6 +539,8 @@ def normalize_text(
     eot_token: str = None,
     enable_special_tokens: List[str] = None,
     map_letters: Dict[str, str] = MAP_LETTERS,
+    keep_percent: bool = False,
+    keep_time_colon: bool = False,
 ) -> str:
     """Normalize Arabic/English ASR transcript text.
 
@@ -543,6 +566,18 @@ def normalize_text(
             to it, override an entry, or drop one, e.g.
             {**MAP_LETTERS, "ة": "ه"} to add a mapping on top of the
             default, or a filtered copy to remove one.
+        keep_percent: keep a "%" that belongs to a number, glued to it
+            ("100% من" stays "100% من", "٪٥٠" -> "50%", "50 %" -> "50%",
+            the prefixed "%50" -> "50%"). A "%" not bound to a number is
+            still stripped. False (default) strips every "%", which is
+            what an ASR hypothesis usually needs, since a model says
+            "في المية"/"percent" rather than emitting the symbol; turn it
+            on for training labels that keep written symbols.
+        keep_time_colon: keep a ":" between digits, like a decimal point
+            ("6:00" stays "6:00", "2:1" stays "2:1"). Other colons are
+            still stripped. False (default) strips it, so "6:00" becomes
+            "6 00". Unrelated to ":" in enable_punc, which keeps every
+            colon.
 
     Returns:
         Normalized text. Any "<...>" tag span (e.g. "<afdaslk>",
@@ -554,6 +589,10 @@ def normalize_text(
 
     active_eot = eot_token
     special_tokens = list(enable_special_tokens or [])
+    # "٪" is folded to "%" below, so an enable_punc asking for the Arabic
+    # spelling has to ask for the folded one to still match.
+    if enable_punc:
+        enable_punc = ["%" if p == "٪" else p for p in enable_punc]
 
     # Collapse "..." (any run of 2+ periods) to a single "." — an ellipsis
     # isn't a decimal point (single "." between digits is left untouched
@@ -563,8 +602,17 @@ def normalize_text(
     # Before number matching, so "اثنین" (Persian ی) and "ﺛﻼﺛﺔ" convert too.
     text = PRESENTATION_FORMS_PATTERN.sub(lambda m: unicodedata.normalize("NFKC", m.group(0)), text)
     text = text.translate(LOOKALIKE_LETTERS)
+    # Before the Urdu/extended-Arabic strip further down, which deletes "٪".
+    text = text.translate(PERCENT_SIGN)
 
     text = normalize_numbers(text)
+
+    # After normalize_numbers, so the Arabic-Indic digits around a "%" are
+    # already ASCII ("٪٥٠" -> "%50" -> "50%").
+    if keep_percent:
+        text = PERCENT_GLUED_BEFORE_PATTERN.sub(r"\1%", text)
+        text = PERCENT_SPACED_AFTER_PATTERN.sub(r"\1%", text)
+        text = PERCENT_SPACED_BEFORE_PATTERN.sub(r"\1%", text)
 
     # Temporarily hide the eot token and any enabled special tokens before
     # normalization so they don't get stripped or separated, then strip
@@ -603,21 +651,30 @@ def normalize_text(
     text = DIACRITICS_PATTERN.sub("", text)
 
     # 5. Remove punctuation / symbols
+    # "%" and ":" survive the strip while their flag is on, then the ones that
+    # aren't bound to a number are removed right after, the same shape as the
+    # decimal dot below.
+    keep_extra = re.escape(("%" if keep_percent else "") + (":" if keep_time_colon else ""))
     if enable_punc:
         # Create a dynamic pattern that excludes enabled punctuation
         punc_to_keep = "".join(re.escape(p) for p in enable_punc)
         # Keep Arabic letters, a-z, 0-9, whitespace, apostrophes, AND enabled punctuation
         # (both straight ' and curly ’, so English contractions like "I'll"/"that's" survive)
-        dynamic_pattern = re.compile(rf"[^ء-يa-z0-9\s{punc_to_keep}_'’.]")  # include _ for __EOT_TOKEN__
+        dynamic_pattern = re.compile(rf"[^ء-يa-z0-9\s{punc_to_keep}{keep_extra}_'’.]")  # include _ for __EOT_TOKEN__
         text = dynamic_pattern.sub(" ", text)
         if "." not in enable_punc:
             text = NON_DECIMAL_DOT_PATTERN.sub(" ", text)
     else:
         # Keeps: Arabic letters, a-z, 0-9, space, and apostrophes (straight '
         # and curly ’) so contractions survive. Need to include _ for __EOT_TOKEN__
-        temp_pattern = re.compile(r"[^ء-يa-z0-9\s_'’.]")
+        temp_pattern = re.compile(rf"[^ء-يa-z0-9\s{keep_extra}_'’.]")
         text = temp_pattern.sub(" ", text)
         text = NON_DECIMAL_DOT_PATTERN.sub(" ", text)
+
+    if keep_time_colon and ":" not in (enable_punc or ()):
+        text = NON_TIME_COLON_PATTERN.sub(" ", text)
+    if keep_percent and "%" not in (enable_punc or ()):
+        text = STRAY_PERCENT_PATTERN.sub(" ", text)
 
     # Re-insert eot_token
     if active_eot and " __eot_token__ " in text:
@@ -639,8 +696,9 @@ def normalize_text(
             # Remove space before punctuation
             text = re.sub(r'\s+' + escaped_p, p, text)
             # Add exactly one space after punctuation, except when it's a
-            # decimal separator (digit.digit / digit,digit)
-            if p in ('.', ','):
+            # decimal/thousands separator or a clock colon (digit.digit /
+            # digit,digit / digit:digit)
+            if p in ('.', ',', ':'):
                 def _add_space(m, _p=p):
                     i = m.start()
                     prev_digit = i > 0 and text[i - 1].isdigit()

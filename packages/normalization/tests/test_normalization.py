@@ -370,6 +370,67 @@ def test_normalize_numbers_words_that_are_not_numbers_here():
     assert normalize_numbers("one of them") == "one of them"
 
 
+def test_normalize_text_percent_stripped_by_default():
+    # Default output is unchanged from 3.1.0: an ASR model says "في المية",
+    # it doesn't emit the symbol, so a reference keeping "%" scores worse.
+    assert normalize_text("100% من خدماته") == "100 من خدماته"
+    assert normalize_text("نسبة ٥٠٪ تقريبا") == "نسبة 50 تقريبا"
+    assert normalize_text("الساعة 6:00 مساء") == "الساعة 6 00 مساء"
+
+
+def test_normalize_text_keep_percent():
+    assert normalize_text("100% من خدماته", keep_percent=True) == "100% من خدماته"
+    assert normalize_text("3.5%", keep_percent=True) == "3.5%"
+    # Arabic "٪" folds to "%", and either written order comes out the same way
+    assert normalize_text("نسبة ٥٠٪ تقريبا", keep_percent=True) == "نسبة 50% تقريبا"
+    assert normalize_text("٪٥٠ من الطلاب", keep_percent=True) == "50% من الطلاب"
+    assert normalize_text("%50 من الطلاب", keep_percent=True) == "50% من الطلاب"
+    assert normalize_text("50 %", keep_percent=True) == "50%"
+    assert normalize_text("نسبة % 50", keep_percent=True) == "نسبة 50%"
+    # the sign binds to the number it touches, so two numbers stay two numbers
+    assert normalize_text("عام 2020 %50 زيادة", keep_percent=True) == "عام 2020 50% زيادة"
+    assert normalize_text("نسبة 50 % 60", keep_percent=True) == "نسبة 50% 60"
+    # not bound to a number: stripped like any other symbol
+    assert normalize_text("% alone", keep_percent=True) == "alone"
+    assert normalize_text("20%.", enable_punc=["."], keep_percent=True) == "20%."
+
+
+def test_normalize_text_keep_time_colon():
+    assert normalize_text("الساعة 6:00 مساء", keep_time_colon=True) == "الساعة 6:00 مساء"
+    assert normalize_text("at 10:30 am", keep_time_colon=True) == "at 10:30 am"
+    assert normalize_text("النتيجة 2:1", keep_time_colon=True) == "النتيجة 2:1"
+    assert normalize_text("time 6:00:30", keep_time_colon=True) == "time 6:00:30"
+    # a colon outside digits is still stripped
+    assert normalize_text("قال: نعم", keep_time_colon=True) == "قال نعم"
+    assert normalize_text("12:", keep_time_colon=True) == "12"
+
+
+def test_normalize_text_enabled_punc_percent_and_colon():
+    # enable_punc keeps every colon, and an enabled ":" between digits gets
+    # no space after it ("6: 00" was a different reading of the time)
+    assert normalize_text("الساعة 6:00 و 10:30", enable_punc=[":"]) == "الساعة 6:00 و 10:30"
+    assert normalize_text("قال: نعم", enable_punc=[":"]) == "قال: نعم"
+    # the Arabic percent spelling is folded, so enable_punc=["٪"] still matches
+    assert normalize_text("نسبة ٥٠٪ تقريبا", enable_punc=["٪"]) == "نسبة 50% تقريبا"
+    assert normalize_text("نسبة ٥٠٪ تقريبا", enable_punc=["%"]) == "نسبة 50% تقريبا"
+
+
+def test_normalize_text_percent_and_colon_idempotent():
+    texts = ["100% من خدماته", "٪٥٠", "عام 2020 %50", "الساعة 6:00 مساء.", "قال: نعم", "% x"]
+    kwargs = [
+        {},
+        {"keep_percent": True},
+        {"keep_time_colon": True},
+        {"keep_percent": True, "keep_time_colon": True},
+        {"enable_punc": [".", ","], "keep_percent": True, "keep_time_colon": True},
+        {"enable_punc": [":", "%"]},
+    ]
+    for text in texts:
+        for kw in kwargs:
+            once = normalize_text(text, **kw)
+            assert normalize_text(once, **kw) == once, (text, kw, once)
+
+
 if __name__ == "__main__":
     test_normalize_numbers_arabic_words()
     test_normalize_numbers_english_words()
@@ -418,3 +479,8 @@ if __name__ == "__main__":
     test_normalize_text_keeps_decimal_point()
     test_normalize_numbers_two_ones_are_a_range()
     test_normalize_numbers_words_that_are_not_numbers_here()
+    test_normalize_text_percent_stripped_by_default()
+    test_normalize_text_keep_percent()
+    test_normalize_text_keep_time_colon()
+    test_normalize_text_enabled_punc_percent_and_colon()
+    test_normalize_text_percent_and_colon_idempotent()

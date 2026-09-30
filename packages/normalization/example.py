@@ -55,6 +55,12 @@ def main():
     # tanwin on an ordinary word folds to plain alif, decimals survive
     print(normalize_text("شكراً جداً، السعر 2.75 دولار."))
 
+    # "%" and a clock ":" are stripped by default, kept per flag
+    print(normalize_text("نسبة ٥٠٪ الساعة 6:00 مساء"))
+    print(normalize_text("نسبة ٥٠٪ الساعة 6:00 مساء", keep_percent=True, keep_time_colon=True))
+    # enable_punc keeps every colon instead, with no space inside a clock time
+    print(normalize_text("قال: نعم الساعة 6:00", enable_punc=[":"]))
+
 
 if __name__ == "__main__":
     main()

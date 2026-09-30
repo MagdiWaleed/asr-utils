@@ -9,6 +9,8 @@ def normalize_text(
     eot_token: str = None,
     enable_special_tokens: List[str] = None,
     map_letters: Dict[str, str] = MAP_LETTERS,
+    keep_percent: bool = False,
+    keep_time_colon: bool = False,
 ) -> str: ...
 
 def normalize_numbers(text: str) -> str: ...
@@ -136,6 +138,30 @@ it, and a decimal point survives even though "." isn't enabled punctuation:
 ```python
 normalize_text("شكراً جداً، السعر 2.75 دولار.")
 # -> 'شكرا جدا السعر 2.75 دولار'
+```
+
+## Percent and clock times in normalize_text
+
+Both are stripped by default, because an ASR model says "في المية" rather
+than emitting the symbol. `keep_percent` keeps a "%" that belongs to a
+number, glued to it and always in the same order ("٪٥٠", "%50", "50 %" all
+become "50%"); `keep_time_colon` keeps a ":" between digits like a decimal
+point. A "%" not bound to a number, and a colon outside digits, are still
+stripped:
+
+```python
+normalize_text("نسبة ٥٠٪ الساعة 6:00 مساء")
+# -> 'نسبة 50 الساعة 6 00 مساء'
+normalize_text("نسبة ٥٠٪ الساعة 6:00 مساء", keep_percent=True, keep_time_colon=True)
+# -> 'نسبة 50% الساعة 6:00 مساء'
+```
+
+Passing `":"` in `enable_punc` keeps every colon instead, and a clock colon
+gets no space after it:
+
+```python
+normalize_text("قال: نعم الساعة 6:00", enable_punc=[":"])
+# -> 'قال: نعم الساعة 6:00'
 ```
 
 See the `normalize_numbers` docstring for what is still not handled
