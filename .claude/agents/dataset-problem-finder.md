@@ -1,8 +1,8 @@
 ---
 name: dataset-problem-finder
 description: >
-  Read-only scanner for ASR reference/hypothesis jsonl datasets (like
-  an evaluation corpus/output). Finds patterns that inflate WER/CER without
+  Read-only scanner for ASR reference/hypothesis JSONL datasets. Finds
+  patterns that inflate WER/CER without
   representing a real recognition error: unhandled bracket-style markers
   ([music], [noise], (inaudible), {overlap}, <...> tags), glued-word
   repetitions, encoding oddities, malformed/empty fields. Reports

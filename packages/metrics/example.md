@@ -98,7 +98,7 @@ calculate_wer("لالالالا", "لا لا لا لا", split_repeated_words=[]
 
 ## Validated against real data
 
-Cross-checked against `a separate project`/`an evaluation corpus`'s published
+Cross-checked against independently generated benchmark
 `results.json` numbers by normalizing (`asr_utils.normalization`,
 default settings) and pooling every reference/hypothesis pair per
 dataset:

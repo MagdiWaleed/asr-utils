@@ -4,3 +4,12 @@ __pycache__/
 *.venv*/
 dist/
 *.egg-info/
+.pytest_cache/
+
+# Local development configuration and scratch work
+.env
+.env.*
+!.env.example
+temp/
+.agents/
+.codex/
