@@ -13,3 +13,7 @@ dist/
 temp/
 .agents/
 .codex/
+
+# added by backup_repos.py
+venv/
+node_modules/
